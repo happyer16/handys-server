@@ -8,7 +8,6 @@ import co.handys.booking.payment.domain.PaymentIntent
 import co.handys.common.domain.SellMode
 import co.handys.inventory.api.HoldCommand
 import co.handys.inventory.api.InventoryApi
-import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -22,7 +21,6 @@ class CreateDirectReservationService(
     @Suppress("UNUSED_PARAMETER") paymentGateway: PaymentGateway,
     private val clock: Clock,
 ) {
-    @Transactional
     fun execute(command: CreateDirectReservationCommand): CreateDirectReservationResult {
         val now = clock.instant()
         val expiresAt = now.plus(PREPARE_TTL)
