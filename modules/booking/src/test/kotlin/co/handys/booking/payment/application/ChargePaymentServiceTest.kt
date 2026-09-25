@@ -46,7 +46,9 @@ class ChargePaymentServiceTest : BehaviorSpec({
     val idempotency = FakeIdempotencyStore()
     val transactions = TransactionTemplate(NoOpTransactionManager())
 
-    var gatewayBehaviour: (ChargeRequest) -> ChargeResult = { succeeded() }
+    var gatewayBehaviour: (ChargeRequest) -> ChargeResult = {
+        ChargeResult.Succeeded(pgPaymentId = "pg_test_1", pgEventId = "evt_test_1")
+    }
     val gateway = TransactionAssertingGateway(behaviour = { gatewayBehaviour(it) })
 
     val service =

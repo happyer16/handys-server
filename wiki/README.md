@@ -22,6 +22,7 @@ AI로 쓸 때: [`prd-harness`](../skills/prd-harness/SKILL.md) · [`adr-harness`
 | [ADR-001 재고·오버부킹 모델](./decisions/001-inventory-overbooking.md) | 특정방 vs 호텔형. 오버북은 기간·규모·비율 게이트 + 어드민 보수 설정 |
 | [ADR-002 서버 모듈 경계](./decisions/002-module-boundaries.md) | 모듈식 모놀리스. property→inventory→booking→checkin + channel·app-api |
 | [ADR-003 결제 멱등성·트랜잭션 단위](./decisions/003-payment-idempotency-tx.md) | PG 호출은 TX 밖. Prepare/Finalize 분리 + `idempotency_record` 키 고정 |
+| [ADR-004 재고 Redis·백업](./decisions/004-inventory-redis-backup.md) | Postgres SSOT + Redis held 가속. AOF everysec. 백업 1차=Postgres (Proposed) |
 
 ### PRD
 
