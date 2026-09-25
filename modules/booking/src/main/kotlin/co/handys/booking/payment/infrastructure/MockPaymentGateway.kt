@@ -3,6 +3,8 @@ package co.handys.booking.payment.infrastructure
 import co.handys.booking.payment.application.ChargeRequest
 import co.handys.booking.payment.application.ChargeResult
 import co.handys.booking.payment.application.PaymentGateway
+import co.handys.booking.payment.application.RefundRequest
+import co.handys.booking.payment.application.RefundResult
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -16,6 +18,7 @@ class MockPaymentGateway(
     private val delayMillis: Long = DEFAULT_DELAY_MILLIS,
 ) : PaymentGateway {
     private val successByIdempotencyKey = ConcurrentHashMap<String, ChargeResult.Succeeded>()
+    private val refundByIdempotencyKey = ConcurrentHashMap<String, RefundResult.Succeeded>()
 
     override fun charge(request: ChargeRequest): ChargeResult {
         successByIdempotencyKey[request.idempotencyKey]?.let { return it }
@@ -34,6 +37,14 @@ class MockPaymentGateway(
             )
         }
     }
+
+    override fun refund(request: RefundRequest): RefundResult =
+        refundByIdempotencyKey.computeIfAbsent(request.idempotencyKey) {
+            RefundResult.Succeeded(
+                pgRefundId = "rfnd_${UUID.randomUUID()}",
+                amountWon = request.amountWon,
+            )
+        }
 
     companion object {
         private const val DEFAULT_DELAY_MILLIS = 100L

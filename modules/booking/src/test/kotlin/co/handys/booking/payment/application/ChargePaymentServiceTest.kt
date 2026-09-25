@@ -44,7 +44,7 @@ class ChargePaymentServiceTest {
     private val transactions = TransactionTemplate(NoOpTransactionManager())
 
     private var gatewayBehaviour: (ChargeRequest) -> ChargeResult = { succeeded() }
-    private val gateway = TransactionAssertingGateway { gatewayBehaviour(it) }
+    private val gateway = TransactionAssertingGateway(behaviour = { gatewayBehaviour(it) })
 
     private val service =
         ChargePaymentService(

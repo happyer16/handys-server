@@ -52,6 +52,9 @@ class HandlePgWebhookServiceTest {
             paymentGateway = object : PaymentGateway {
                 override fun charge(request: ChargeRequest): ChargeResult =
                     error("prepare must not charge")
+
+                override fun refund(request: RefundRequest): RefundResult =
+                    error("prepare must not refund")
             },
             clock = clock,
         )
