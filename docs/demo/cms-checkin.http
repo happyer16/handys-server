@@ -1,0 +1,49 @@
+### Handys CMS · check-in readiness demo
+### App: ./gradlew :app-api:bootRun  →  http://localhost:8080
+### Seed: CmsDemoDataLoader → P-SEOUL-01 / RT-DELUXE / R-1001 (U-301 Dirty)
+###
+### 기대: R-1001 키 발급 실패 (room_ready). HK Ready 후 재시도 시 발급.
+
+@base = http://localhost:8080
+
+### ---------- 1. 당일 quote — sold out + lead gate ----------
+### date = 오늘(Asia/Seoul). 기동일 기준으로 맞출 것.
+GET {{base}}/api/v1/channels/direct/quote?propertyId=P-SEOUL-01&roomTypeId=RT-DELUXE&date=2026-09-25
+
+### ---------- 2. 예약 상세 + readiness (첫 blocker = room_ready) ----------
+GET {{base}}/api/v1/reservations/R-1001
+
+### ---------- 3. 키 발급 → 422 READINESS_NOT_MET ----------
+POST {{base}}/api/v1/reservations/R-1001/key
+Accept: application/json
+
+### ---------- 4. Dirty → Ready 후 키 발급 ----------
+POST {{base}}/api/v1/admin/units/U-301/hk
+Content-Type: application/json
+
+{
+  "hkStatus": "Ready"
+}
+
+###
+
+GET {{base}}/api/v1/reservations/R-1001
+
+###
+
+POST {{base}}/api/v1/reservations/R-1001/key
+Accept: application/json
+
+### ---------- 5. (선택) 미래일 예약 거절/허용은 lead·capacity에 따름 ----------
+POST {{base}}/api/v1/channels/direct/bookings
+Content-Type: application/json
+
+{
+  "propertyId": "P-SEOUL-01",
+  "roomTypeId": "RT-DELUXE",
+  "checkIn": "2026-09-25",
+  "checkOut": "2026-09-26",
+  "guestName": "테스트",
+  "guestPhone": "01000000000",
+  "guestEmail": "t@example.com"
+}

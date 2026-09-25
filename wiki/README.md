@@ -11,6 +11,7 @@ AI로 쓸 때: [`prd-harness`](../skills/prd-harness/SKILL.md) · [`adr-harness`
 
 | 문서 | 요약 |
 |------|------|
+| [**과제 제출 노트**](./assignment-notes.md) | 스코프 · 시드 · TC 커버 · AI 흔적 · 회고 · 제출 체크 |
 | [일하는 방식](./working-style.md) | wrapup은 매번 X → 모아서 나중에 회고 |
 | [제품 컨텍스트](./product-context.md) | 핸디즈 사업부문·PLOTT 브랜드·Plott OS·과제 평가 관점 ([handys.co.kr](https://handys.co.kr/)) |
 | [문제 후보 10개](./problem-candidates.md) | 게스트/운영 여정 + 과제용 PON |

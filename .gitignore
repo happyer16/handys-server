@@ -11,3 +11,10 @@ out/
 *.log
 .kotlin/
 .worktrees/
+
+# secrets / local agent scratch
+.env
+.env.*
+!.env.example
+*.pem
+.superpowers/sdd/

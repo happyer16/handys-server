@@ -3,8 +3,14 @@
 Plott OS 과제 — 운영·예약·숙박 도메인의 작은 결과물.  
 결정·기획은 `wiki/`, AI 하네스는 `skills/`, 서버는 Kotlin/Spring Boot 모듈식 모놀리스.
 
-**지금 구현 축:** 다이렉트 결제 멱등 + OTA 채널정산 + 오너 월정산 ([ADR-003](./wiki/decisions/003-payment-idempotency-tx.md) · [정책서](./wiki/prd/payment-settlement/policy.md))  
-**방향만 고정:** 판매 모드·오버북 게이트·체크인 readiness ([ADR-001](./wiki/decisions/001-inventory-overbooking.md) · [CMS·체크인](./wiki/prd/cms-checkin-core/policy.md))
+**제출 한 줄:** 이번 작은 결과물은 **결제·정산 멱등(이중청구·이중정산 0)** 이다. 판매모드·오버북·체크인 readiness는 규칙·얇은 데모까지.
+
+| 축 | 상태 |
+|----|------|
+| 다이렉트 Intent 멱등 · PG TX 밖 · OTA 정산 · 오너 월정산 | **구현** — [ADR-003](./wiki/decisions/003-payment-idempotency-tx.md) · [정책서](./wiki/prd/payment-settlement/policy.md) |
+| 특정방/호텔형 · 오버북 게이트 · readiness/키 stub | **규칙 + 얇은 데모** — [ADR-001](./wiki/decisions/001-inventory-overbooking.md) · [CMS·체크인](./wiki/prd/cms-checkin-core/policy.md) |
+
+제출 체크·TC 커버·회고: [`wiki/assignment-notes.md`](./wiki/assignment-notes.md)
 
 ---
 
@@ -51,24 +57,26 @@ Plott OS 과제 — 운영·예약·숙박 도메인의 작은 결과물.
 |------|----------------|
 | Mock PG · Intent 멱등 · PG는 TX 밖 | 실 PG · 실 OTA 연동 |
 | 성공 시에만 `held→confirmed` | 스마트 프라이싱 · 주차 |
-| OTA payout Posted → 월 정산 배치 (`app-batch`) | 체크인 키/본인확인 UI 풀구현 |
-| 불일치 큐 · 취소 24h 이진 환불 | 전채널 환불 통일 · 오너스 풀스택 |
+| OTA payout Posted → 월 정산 (`app-batch` + admin API) | 체크인 UI 풀구현 |
+| 불일치 큐 · 취소 24h 이진 환불(서비스·테스트) | 전채널 환불 통일 · 오너스 풀스택 · 취소 HTTP |
 
-데모:
+### 5분 데모
 
 ```bash
 ./gradlew :app-api:bootRun      # http://localhost:8080 — Swagger `/swagger-ui.html`
-./gradlew :app-batch:bootRun    # http://localhost:8081 — 정산 + 재고 held expire (api에 스케줄러 없음)
-./gradlew :module-booking:test # 멱등·웹훅·정산 TC
-./gradlew :module-inventory:test
-
-# Redis hot layer (ADR-004) — optional
-docker compose -f docker-compose.redis.yml up -d
-./gradlew :app-api:bootRun --args='--spring.profiles.active=redis'
-./gradlew :app-batch:bootRun --args='--spring.profiles.active=redis'
+./gradlew :app-batch:bootRun    # http://localhost:8081 — 스케줄러만 (api에 없음)
+./gradlew test                  # 제출 직전
 ```
 
-정산·재고 expire 배치는 **app-batch에서만** 돈다. 정산은 `UNIQUE(job_date)`로 같은 날 중복 실행을 막는다. 재고는 Postgres SSOT + Redis 가속([ADR-004](./wiki/decisions/004-inventory-redis-backup.md)); 기본 설정은 Redis off(PG-only degrade).
+| 파일 | 내용 |
+|------|------|
+| [`docs/demo/payment-settlement.http`](./docs/demo/payment-settlement.http) | charge 연타 · mismatch · 정산 멱등 |
+| [`docs/demo/cms-checkin.http`](./docs/demo/cms-checkin.http) | seed `R-1001` Dirty → 키 차단 → Ready 후 발급 |
+| [`docs/demo/charge-sequence.md`](./docs/demo/charge-sequence.md) | Prepare → PG(Non-TX) → Finalize 시퀀스 |
+
+**시드** (`CmsDemoDataLoader`, 기동 1회): `P-SEOUL-01` · `RT-DELUXE` · `U-301`(Dirty)/`U-302`(Ready) · `R-1001` — 상세는 [assignment-notes §2](./wiki/assignment-notes.md#2-데모-시드-id).
+
+정산·재고 expire 배치는 **app-batch에서만** 돈다. 재고는 Postgres SSOT + Redis 가속([ADR-004](./wiki/decisions/004-inventory-redis-backup.md)); 기본은 Redis off.
 
 ---
 
@@ -95,16 +103,18 @@ app-api                  # Spring Boot REST 진입점
 app-batch                # 배치 전용 진입점 (스케줄러만 — 정산 등)
 modules/
   common                 # 공유 커널 (도메인 로직 금지)
-  property               # 지점·룸타입·유닛·판매모드
-  inventory              # 가용·오버북 게이트 (ADR-001)
-  booking                # 예약 · 결제 · 오너 정산 유스케이스
-  checkin                # readiness · 호텔형 입실 배정
-  channel                # OTA/다이렉트 어댑터 (얇게)
+  property               # 지점·룸타입·유닛·판매모드 (+ HK stub)
+  inventory              # 가용·오버북 게이트 · hold (ADR-001/004)
+  booking                # 예약 · 결제·정산 코어 (이번 제출 중심)
+  checkin                # readiness · 키 stub (얇음 — 데모용)
+  channel                # OTA/다이렉트 quote·book stub (얇음)
 ```
 
 의존 방향 (역방향 금지):
 
 `property ← inventory ← booking ← checkin` · `channel → inventory` · `* → common` · `app-api` / `app-batch` → 도메인 모듈
+
+`checkin`·`channel`은 **스캐폴드+stub**이다. 구조만 예쁜 상태가 되지 않도록 결제 코어와 데모 경로를 제출 축으로 둔다.
 
 ---
 
@@ -114,14 +124,14 @@ modules/
 
 | 스킬 | 역할 | 산출물 |
 |------|------|--------|
-| [`skills/prd-harness`](./skills/prd-harness/SKILL.md) | 정책서 → PRD → 6차원 평가 | `wiki/prd/{slug}/` |
-| [`skills/adr-harness`](./skills/adr-harness/SKILL.md) | ADR 작성 → 6차원 평가 | `wiki/decisions/` |
+| [`skills/prd-harness`](./skills/prd-harness/SKILL.md) | 정책서 → PRD → 6차원 평가 | `wiki/prd/{slug}/` + `eval.md` |
+| [`skills/adr-harness`](./skills/adr-harness/SKILL.md) | ADR 작성 → 6차원 평가 | `wiki/decisions/` (+ `eval-004`) |
 | [`skills/handys-session-wrapup`](./skills/handys-session-wrapup/SKILL.md) | 세션 마무리·wiki 인계 | `sessions/` · wiki 갱신 |
 
-Cursor는 `.cursor/skills/` 심볼릭 링크로 위 스킬을 로드한다.
+평가 파일: [cms eval](./wiki/prd/cms-checkin-core/eval.md) · [payment eval](./wiki/prd/payment-settlement/eval.md) · [ADR-004 eval](./wiki/decisions/eval-004.md).  
+ADR-001~003은 Accepted 직행(eval 파일 없음) — [assignment-notes §4](./wiki/assignment-notes.md#4-ai-활용--검토-흔적).
 
-**호출 예:** `prd-harness` · `adr-harness` · `session-wrapup`  
-근거 자료: [`skills/prd-harness/references/`](./skills/prd-harness/references/)
+Cursor는 `.cursor/skills/` 심볼릭 링크로 위 스킬을 로드한다.
 
 ---
 
@@ -176,11 +186,13 @@ PG·알림·채널 같은 **외부 호출은 DB TX와 한 원자 단위가 될 �
 
 ## 위키 · 레포 구조
 
-인덱스: [`wiki/README.md`](./wiki/README.md)
+인덱스: [`wiki/README.md`](./wiki/README.md) · 제출 노트: [`wiki/assignment-notes.md`](./wiki/assignment-notes.md)
 
 | 경로 | 역할 |
 |------|------|
-| `wiki/decisions/` | ADR (재고·오버부킹, 모듈 경계, 결제 멱등) |
+| `wiki/decisions/` | ADR (재고·오버부킹, 모듈 경계, 결제 멱등, Redis) |
 | `wiki/prd/` | 정책서·PRD·평가 |
+| `docs/demo/` | 제출용 HTTP 데모 · charge 시퀀스 |
 | `app-api/` · `app-batch/` · `modules/` | Spring Boot 멀티 모듈 |
-| `skills/` · `.cursor/skills/` | AI 하네스 (활용·검토 과정이 보이게) |
+| `skills/` · `.cursor/skills/` | AI 하네스 |
+| `sessions/` | 세션 아카이브(회고 재료) |

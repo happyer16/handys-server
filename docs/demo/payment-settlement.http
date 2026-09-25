@@ -1,0 +1,135 @@
+### Handys payment · settlement demo
+### App: ./gradlew :app-api:bootRun  →  http://localhost:8080
+### Swagger: http://localhost:8080/swagger-ui.html
+###
+### 시나리오 A — 멱등 charge (TC-PAY-IDEM-01)
+### 시나리오 B — EXPIRED 후 웹훅 → 불일치 큐 (TC-PAY-MISMATCH-01)
+### 시나리오 C — 정산 멱등 (TC-STL-IDEM-01)
+###
+### IntelliJ / VS Code REST Client: 위에서부터 실행. {{reservationId}}는 A-1 응답에서 복사.
+
+@base = http://localhost:8080
+
+### ---------- A-1. Prepare (PG 없음) ----------
+# @name createDirect
+POST {{base}}/guest/reservations
+Content-Type: application/json
+
+{
+  "propertyId": "demo-prop",
+  "roomTypeOrUnitId": "demo-deluxe",
+  "checkIn": "2026-10-10",
+  "checkOut": "2026-10-12",
+  "amountWon": 120000,
+  "mode": "HOTEL_POOL"
+}
+
+### ---------- A-2. Charge ×5 (두 번째부터 AlreadySucceeded) ----------
+@reservationId = {{createDirect.response.body.reservationId}}
+
+POST {{base}}/guest/reservations/{{reservationId}}/charge
+
+###
+
+POST {{base}}/guest/reservations/{{reservationId}}/charge
+
+###
+
+POST {{base}}/guest/reservations/{{reservationId}}/charge
+
+###
+
+POST {{base}}/guest/reservations/{{reservationId}}/charge
+
+###
+
+POST {{base}}/guest/reservations/{{reservationId}}/charge
+
+### ---------- B-1. 새 예약 후 강제 expire ----------
+# @name createForMismatch
+POST {{base}}/guest/reservations
+Content-Type: application/json
+
+{
+  "propertyId": "demo-prop",
+  "roomTypeOrUnitId": "demo-deluxe-b",
+  "checkIn": "2026-10-15",
+  "checkOut": "2026-10-16",
+  "amountWon": 80000,
+  "mode": "HOTEL_POOL"
+}
+
+###
+@mismatchReservationId = {{createForMismatch.response.body.reservationId}}
+
+POST {{base}}/admin/expire-payments
+
+###
+### B-2. (데모) expire job이 TTL 전이면 상태가 PENDING일 수 있음.
+### IT는 EXPIRED로 강제 후 웹훅. 수동 확인 시 Swagger로 상태 확인하거나
+### 아래 웹훅만 날려 보고 /admin/mismatches 를 본다.
+### 확실한 재현은: ./gradlew :app-api:test --tests '*PaymentIdempotencyIT*MISMATCH*'
+
+POST {{base}}/webhooks/mock-pg
+Content-Type: application/json
+
+{
+  "pgEventId": "evt_demo_late_1",
+  "reservationId": "{{mismatchReservationId}}",
+  "pgPaymentId": "pg_demo_late"
+}
+
+###
+
+GET {{base}}/admin/mismatches
+
+### ---------- C-1. charge 후 월 정산 2회 (동일 응답) ----------
+# @name createForSettle
+POST {{base}}/guest/reservations
+Content-Type: application/json
+
+{
+  "propertyId": "demo-prop",
+  "roomTypeOrUnitId": "demo-deluxe-c",
+  "checkIn": "2026-09-20",
+  "checkOut": "2026-09-22",
+  "amountWon": 100000,
+  "mode": "HOTEL_POOL"
+}
+
+###
+@settleReservationId = {{createForSettle.response.body.reservationId}}
+
+POST {{base}}/guest/reservations/{{settleReservationId}}/charge
+
+###
+
+POST {{base}}/admin/settlements
+Content-Type: application/json
+
+{
+  "propertyId": "demo-prop",
+  "period": "2026-09"
+}
+
+###
+
+POST {{base}}/admin/settlements
+Content-Type: application/json
+
+{
+  "propertyId": "demo-prop",
+  "period": "2026-09"
+}
+
+### ---------- (선택) OTA payout Posted ----------
+POST {{base}}/admin/payouts
+Content-Type: application/json
+
+{
+  "channel": "ota_a",
+  "channelPayoutId": "po_demo_1",
+  "propertyId": "demo-prop",
+  "amountWon": 50000,
+  "reservationIds": []
+}
