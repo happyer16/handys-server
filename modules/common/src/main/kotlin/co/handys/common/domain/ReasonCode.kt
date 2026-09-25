@@ -1,0 +1,18 @@
+package co.handys.common.domain
+
+enum class ReasonCode {
+    NOT_FOUND,
+    FORBIDDEN,
+    BAD_REQUEST,
+    AT_CAPACITY,
+    OVERBOOK_GATE_LEAD,
+    OVERBOOK_GATE_SIZE,
+    INVENTORY_STALE,
+    CONFLICT,
+    UNAUTHORIZED,
+    PRICE_MISSING,
+    UNIT_UNAVAILABLE,
+    MODE_LOCKED,
+    READINESS_NOT_MET,
+    CHECKIN_WINDOW,
+}
