@@ -6,6 +6,7 @@ owner: "handys-assignment"
 created: "2026-09-25"
 updated: "2026-09-25"
 related:
+  - ../../decisions/003-payment-idempotency-tx.md
   - policy.md
   - ../../decisions/001-inventory-overbooking.md
   - ../../decisions/002-module-boundaries.md

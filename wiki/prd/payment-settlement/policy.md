@@ -8,6 +8,7 @@ updated: "2026-09-25"
 related:
   - ../../decisions/001-inventory-overbooking.md
   - ../../decisions/002-module-boundaries.md
+  - ../../decisions/003-payment-idempotency-tx.md
   - ../../product-context.md
   - ../../problem-candidates.md
   - ../cms-checkin-core/policy.md
