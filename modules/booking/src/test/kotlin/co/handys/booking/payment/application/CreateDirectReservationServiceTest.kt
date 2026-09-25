@@ -12,10 +12,6 @@ import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldNotBeBlank
-import org.mockito.kotlin.any
-import org.mockito.kotlin.mock
-import org.mockito.kotlin.never
-import org.mockito.kotlin.verify
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
@@ -25,13 +21,11 @@ class CreateDirectReservationServiceTest : BehaviorSpec({
     val now = Instant.parse("2026-09-25T12:00:00Z")
     val reservations = FakeReservationRepository()
     val paymentIntents = FakePaymentIntentRepository()
-    val gateway = mock<PaymentGateway>()
     val service =
         CreateDirectReservationService(
             inventory = FakeInventoryService(),
             reservations = reservations,
             paymentIntents = paymentIntents,
-            paymentGateway = gateway,
             clock = Clock.fixed(now, ZoneOffset.UTC),
         )
 
@@ -39,9 +33,7 @@ class CreateDirectReservationServiceTest : BehaviorSpec({
         When("execute is called") {
             val result = service.execute(sampleCommand())
 
-            Then("it creates a pending reservation and requires-action intent without calling PG") {
-                verify(gateway, never()).charge(any())
-
+            Then("it creates a pending reservation and requires-action intent") {
                 val reservation = reservations.findById(result.reservationId).shouldNotBeNull()
                 reservation.status shouldBe ReservationStatus.PENDING_PAYMENT
                 reservation.paymentSource shouldBe PaymentSource.DIRECT

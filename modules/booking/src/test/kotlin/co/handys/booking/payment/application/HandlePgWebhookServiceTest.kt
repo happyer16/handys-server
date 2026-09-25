@@ -5,29 +5,30 @@ import co.handys.booking.payment.domain.IdempotencyKeys
 import co.handys.booking.payment.domain.PaymentIntentStatus
 import co.handys.booking.payment.domain.PaymentMismatchReason
 import co.handys.booking.payment.fake.FakeIdempotencyStore
+import co.handys.booking.payment.fake.FakeInventoryService
 import co.handys.booking.payment.fake.FakeMismatchQueue
 import co.handys.booking.payment.fake.FakePaymentIntentRepository
 import co.handys.booking.payment.fake.FakePgEventDedupStore
 import co.handys.booking.payment.fake.FakeReservationRepository
 import co.handys.booking.payment.support.NoOpTransactionManager
 import co.handys.common.domain.SellMode
-import co.handys.booking.payment.fake.FakeInventoryService
+import io.kotest.core.spec.IsolationMode
+import io.kotest.core.spec.style.BehaviorSpec
+import io.kotest.matchers.nulls.shouldNotBeNull
+import io.kotest.matchers.shouldBe
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertTrue
 
-class HandlePgWebhookServiceTest {
-    private var now: Instant = Instant.parse("2026-09-25T12:00:00Z")
+class HandlePgWebhookServiceTest : BehaviorSpec({
+    isolationMode = IsolationMode.InstancePerTest
 
-    private val clock =
+    var now: Instant = Instant.parse("2026-09-25T12:00:00Z")
+
+    val clock =
         object : Clock() {
             override fun getZone(): ZoneId = ZoneOffset.UTC
 
@@ -36,15 +37,15 @@ class HandlePgWebhookServiceTest {
             override fun instant(): Instant = now
         }
 
-    private val inventory = co.handys.booking.payment.fake.FakeInventoryService()
-    private val reservations = FakeReservationRepository()
-    private val paymentIntents = FakePaymentIntentRepository()
-    private val idempotency = FakeIdempotencyStore()
-    private val mismatches = FakeMismatchQueue()
-    private val pgEvents = FakePgEventDedupStore()
-    private val transactions = TransactionTemplate(NoOpTransactionManager())
+    val inventory = FakeInventoryService()
+    val reservations = FakeReservationRepository()
+    val paymentIntents = FakePaymentIntentRepository()
+    val idempotency = FakeIdempotencyStore()
+    val mismatches = FakeMismatchQueue()
+    val pgEvents = FakePgEventDedupStore()
+    val transactions = TransactionTemplate(NoOpTransactionManager())
 
-    private val prepareService =
+    val prepareService =
         CreateDirectReservationService(
             inventory = inventory,
             reservations = reservations,
@@ -52,7 +53,7 @@ class HandlePgWebhookServiceTest {
             clock = clock,
         )
 
-    private val handler =
+    val handler =
         HandlePgWebhookService(
             transactions = transactions,
             reservations = reservations,
@@ -64,45 +65,7 @@ class HandlePgWebhookServiceTest {
             clock = clock,
         )
 
-    @Test
-    fun `duplicate webhook finalizes once`() {
-        val reservationId = prepareReservation()
-        val holdId = assertNotNull(reservations.findById(reservationId)).holdId
-
-        repeat(3) {
-            handler.onSuccess(pgEventId = "evt_1", reservationId = reservationId, pgPaymentId = "pg_1")
-        }
-
-        assertTrue(inventory.isConfirmed(holdId))
-        assertEquals(1, pgEvents.recordedCount())
-        assertEquals(ReservationStatus.CONFIRMED, assertNotNull(reservations.findById(reservationId)).status)
-        assertEquals(0, mismatches.size())
-    }
-
-    @Test
-    fun `late success after expire enqueues mismatch`() {
-        val reservationId = prepareReservation()
-        val holdId = assertNotNull(reservations.findById(reservationId)).holdId
-        val reservation = assertNotNull(reservations.findById(reservationId))
-        reservations.save(reservation.copy(status = ReservationStatus.EXPIRED))
-        inventory.releaseHold(holdId)
-
-        handler.onSuccess(pgEventId = "evt_late", reservationId = reservationId, pgPaymentId = "pg_late")
-
-        assertFalse(inventory.isConfirmed(holdId))
-        assertEquals(1, mismatches.size())
-        val mismatch = mismatches.all().single()
-        assertEquals(PaymentMismatchReason.LATE_SUCCESS_AFTER_EXPIRE, mismatch.reason)
-        assertEquals(reservationId, mismatch.reservationId)
-        assertEquals("evt_late", mismatch.pgEventId)
-        assertEquals(ReservationStatus.EXPIRED, assertNotNull(reservations.findById(reservationId)).status)
-
-        val intent = assertNotNull(paymentIntents.findByIdempotencyKey(IdempotencyKeys.chargeFull(reservationId)))
-        assertEquals(PaymentIntentStatus.Succeeded, intent.status)
-        assertEquals("pg_late", intent.pgPaymentId)
-    }
-
-    private fun prepareReservation(): String =
+    fun prepareReservation(): String =
         prepareService
             .execute(
                 CreateDirectReservationCommand(
@@ -114,4 +77,49 @@ class HandlePgWebhookServiceTest {
                     mode = SellMode.HOTEL_POOL,
                 ),
             ).reservationId
-}
+
+    Given("a pending reservation and a success webhook") {
+        val reservationId = prepareReservation()
+        val holdId = reservations.findById(reservationId).shouldNotBeNull().holdId
+
+        When("the same webhook is delivered three times") {
+            repeat(3) {
+                handler.onSuccess(pgEventId = "evt_1", reservationId = reservationId, pgPaymentId = "pg_1")
+            }
+
+            Then("it finalizes once") {
+                inventory.isConfirmed(holdId) shouldBe true
+                pgEvents.recordedCount() shouldBe 1
+                reservations.findById(reservationId).shouldNotBeNull().status shouldBe ReservationStatus.CONFIRMED
+                mismatches.size() shouldBe 0
+            }
+        }
+    }
+
+    Given("an expired reservation") {
+        val reservationId = prepareReservation()
+        val holdId = reservations.findById(reservationId).shouldNotBeNull().holdId
+        val reservation = reservations.findById(reservationId).shouldNotBeNull()
+        reservations.save(reservation.copy(status = ReservationStatus.EXPIRED))
+        inventory.releaseHold(holdId)
+
+        When("a late success webhook arrives") {
+            handler.onSuccess(pgEventId = "evt_late", reservationId = reservationId, pgPaymentId = "pg_late")
+
+            Then("it enqueues a mismatch without confirming the hold") {
+                inventory.isConfirmed(holdId) shouldBe false
+                mismatches.size() shouldBe 1
+                val mismatch = mismatches.all().single()
+                mismatch.reason shouldBe PaymentMismatchReason.LATE_SUCCESS_AFTER_EXPIRE
+                mismatch.reservationId shouldBe reservationId
+                mismatch.pgEventId shouldBe "evt_late"
+                reservations.findById(reservationId).shouldNotBeNull().status shouldBe ReservationStatus.EXPIRED
+
+                val intent =
+                    paymentIntents.findByIdempotencyKey(IdempotencyKeys.chargeFull(reservationId)).shouldNotBeNull()
+                intent.status shouldBe PaymentIntentStatus.Succeeded
+                intent.pgPaymentId shouldBe "pg_late"
+            }
+        }
+    }
+})

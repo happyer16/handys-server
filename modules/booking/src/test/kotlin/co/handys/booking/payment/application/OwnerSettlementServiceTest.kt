@@ -1,6 +1,7 @@
 package co.handys.booking.payment.application
 
 import co.handys.booking.payment.fake.FakeIdempotencyStore
+import co.handys.booking.payment.fake.FakeInventoryService
 import co.handys.booking.payment.fake.FakeOtaPayoutRepository
 import co.handys.booking.payment.fake.FakePaymentIntentRepository
 import co.handys.booking.payment.fake.FakeRefundRepository
@@ -9,7 +10,10 @@ import co.handys.booking.payment.fake.FakeSettlementRunRepository
 import co.handys.booking.payment.support.NoOpTransactionManager
 import co.handys.booking.payment.support.TransactionAssertingGateway
 import co.handys.common.domain.SellMode
-import co.handys.booking.payment.fake.FakeInventoryService
+import io.kotest.core.spec.IsolationMode
+import io.kotest.core.spec.style.BehaviorSpec
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.Instant
@@ -17,15 +21,13 @@ import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
 
-class OwnerSettlementServiceTest {
-    private var now: Instant = Instant.parse("2026-02-15T12:00:00Z")
+class OwnerSettlementServiceTest : BehaviorSpec({
+    isolationMode = IsolationMode.InstancePerTest
 
-    private val clock =
+    var now: Instant = Instant.parse("2026-02-15T12:00:00Z")
+
+    val clock =
         object : Clock() {
             override fun getZone(): ZoneId = ZoneOffset.UTC
 
@@ -34,27 +36,27 @@ class OwnerSettlementServiceTest {
             override fun instant(): Instant = now
         }
 
-    private val inventory = co.handys.booking.payment.fake.FakeInventoryService()
-    private val reservations = FakeReservationRepository()
-    private val paymentIntents = FakePaymentIntentRepository()
-    private val refunds = FakeRefundRepository()
-    private val payouts = FakeOtaPayoutRepository()
-    private val runs = FakeSettlementRunRepository()
-    private val idempotency = FakeIdempotencyStore()
-    private val transactions = TransactionTemplate(NoOpTransactionManager())
-    private val gateway =
+    val inventory = FakeInventoryService()
+    val reservations = FakeReservationRepository()
+    val paymentIntents = FakePaymentIntentRepository()
+    val refunds = FakeRefundRepository()
+    val payouts = FakeOtaPayoutRepository()
+    val runs = FakeSettlementRunRepository()
+    val idempotency = FakeIdempotencyStore()
+    val transactions = TransactionTemplate(NoOpTransactionManager())
+    val gateway =
         TransactionAssertingGateway(behaviour = {
             ChargeResult.Succeeded(pgPaymentId = "pg_1", pgEventId = "evt_1")
         })
 
-    private val prepare =
+    val prepare =
         CreateDirectReservationService(
             inventory = inventory,
             reservations = reservations,
             paymentIntents = paymentIntents,
             clock = clock,
         )
-    private val charge =
+    val charge =
         ChargePaymentService(
             transactions = transactions,
             gateway = gateway,
@@ -64,10 +66,10 @@ class OwnerSettlementServiceTest {
             inventory = inventory,
             clock = clock,
         )
-    private val ota = CreateOtaReservationService(reservations = reservations, clock = clock)
-    private val postPayout =
+    val ota = CreateOtaReservationService(reservations = reservations, clock = clock)
+    val postPayout =
         PostOtaPayoutService(payouts = payouts, idempotency = idempotency, clock = clock)
-    private val settlement =
+    val settlement =
         RunOwnerSettlementService(
             reservations = reservations,
             paymentIntents = paymentIntents,
@@ -77,8 +79,7 @@ class OwnerSettlementServiceTest {
             idempotency = idempotency,
         )
 
-    @Test
-    fun `settlement run is idempotent`() {
+    Given("a charged direct reservation in September") {
         now = Instant.parse("2026-09-20T12:00:00Z")
         val reservationId =
             prepare
@@ -92,18 +93,21 @@ class OwnerSettlementServiceTest {
                         mode = SellMode.HOTEL_POOL,
                     ),
                 ).reservationId
-        assertIs<ChargePaymentResult.JustSucceeded>(charge.charge(reservationId))
+        charge.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.JustSucceeded>()
 
-        val a = settlement.run("prop1", YearMonth.of(2026, 9))
-        val b = settlement.run("prop1", YearMonth.of(2026, 9))
+        When("settlement is run twice for the same month") {
+            val a = settlement.run("prop1", YearMonth.of(2026, 9))
+            val b = settlement.run("prop1", YearMonth.of(2026, 9))
 
-        assertEquals(a.runId, b.runId)
-        assertEquals(SettlementRunStatus.SUCCEEDED, a.status)
-        assertEquals(85_000L, a.ownerPayoutWon) // 100000 - floor(15000)
+            Then("the run is idempotent") {
+                a.runId shouldBe b.runId
+                a.status shouldBe SettlementRunStatus.SUCCEEDED
+                a.ownerPayoutWon shouldBe 85_000L // 100000 - floor(15000)
+            }
+        }
     }
 
-    @Test
-    fun `OTA checkout Jan payout Feb appears in February only`() {
+    Given("an OTA checkout in January with payout in February") {
         now = Instant.parse("2026-01-15T12:00:00Z")
         val otaReservation =
             ota.execute(
@@ -127,11 +131,15 @@ class OwnerSettlementServiceTest {
             ),
         )
 
-        val jan = settlement.run("prop1", YearMonth.of(2026, 1))
-        val feb = settlement.run("prop1", YearMonth.of(2026, 2))
+        When("settlement runs for January and February") {
+            val jan = settlement.run("prop1", YearMonth.of(2026, 1))
+            val feb = settlement.run("prop1", YearMonth.of(2026, 2))
 
-        assertTrue(jan.lines.none { it.source == "OTA" })
-        assertEquals(1, feb.lines.count { it.source == "OTA" })
-        assertEquals(68_000L, feb.ownerPayoutWon) // 80000 - 12000
+            Then("the payout appears in February only") {
+                jan.lines.none { it.source == "OTA" } shouldBe true
+                feb.lines.count { it.source == "OTA" } shouldBe 1
+                feb.ownerPayoutWon shouldBe 68_000L // 80000 - 12000
+            }
+        }
     }
-}
+})

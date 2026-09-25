@@ -47,7 +47,7 @@ interface InventoryHoldJpaRepository : JpaRepository<InventoryHoldEntity, String
 interface InventoryUnitNightJpaRepository : JpaRepository<InventoryUnitNightEntity, String> {
     fun findAllByHoldId(holdId: String): List<InventoryUnitNightEntity>
 
-    @Modifying
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("DELETE FROM InventoryUnitNightEntity u WHERE u.holdId = :holdId")
     fun deleteByHoldId(@Param("holdId") holdId: String): Int
 }

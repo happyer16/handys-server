@@ -58,11 +58,17 @@ Plott OS 과제 — 운영·예약·숙박 도메인의 작은 결과물.
 
 ```bash
 ./gradlew :app-api:bootRun      # http://localhost:8080 — Swagger `/swagger-ui.html`
-./gradlew :app-batch:bootRun    # http://localhost:8081 — 정산 배치만 (api에 스케줄러 없음)
-./gradlew :modules:booking:test # 멱등·웹훅·정산 TC
+./gradlew :app-batch:bootRun    # http://localhost:8081 — 정산 + 재고 held expire (api에 스케줄러 없음)
+./gradlew :module-booking:test # 멱등·웹훅·정산 TC
+./gradlew :module-inventory:test
+
+# Redis hot layer (ADR-004) — optional
+docker compose -f docker-compose.redis.yml up -d
+./gradlew :app-api:bootRun --args='--spring.profiles.active=redis'
+./gradlew :app-batch:bootRun --args='--spring.profiles.active=redis'
 ```
 
-정산 배치는 **app-batch에서만** 돌며 `UNIQUE(job_date)`로 같은 날 중복 실행을 막는다.
+정산·재고 expire 배치는 **app-batch에서만** 돈다. 정산은 `UNIQUE(job_date)`로 같은 날 중복 실행을 막는다. 재고는 Postgres SSOT + Redis 가속([ADR-004](./wiki/decisions/004-inventory-redis-backup.md)); 기본 설정은 Redis off(PG-only degrade).
 
 ---
 
@@ -157,13 +163,14 @@ Cursor는 `.cursor/skills/` 심볼릭 링크로 위 스킬을 로드한다.
 
 **비동기 · 통합 (TODO)**
 
-예약 완료 이후(확정 알림 · 채널 sync · 체크인 readiness 갱신 · 정산 라인 적재 등)는 **한 TX로 묶기 어렵다**. PG·OTA·도어락·알림은 외부 시스템이고, TX 안에 넣으면 커넥션 점유·부분실패·재시도 지옥이 된다. (결제도 PG는 이미 TX 밖 — [ADR-003](./wiki/decisions/003-payment-idempotency-tx.md))
+PG·알림·채널 같은 **외부 호출은 DB TX와 한 원자 단위가 될 수 없다**. 지금 과제는 Mock PG를 TX 밖에서 호출하는 수준([ADR-003](./wiki/decisions/003-payment-idempotency-tx.md)). 실연동·운영 안정화 때는 **Transactional Outbox**로 올린다. (apartsearcher-server 토스 결제와 같은 결: Intent/트랜잭션 기록을 TX에 남기고, 외부 호출·후속 발행은 outbox 릴레이가 담당.)
 
 | TODO | 방향 |
 |------|------|
-| **Outbox** | 예약/결제 확정 TX에서 도메인 이벤트만 같은 DB에 기록 → 폴러/릴레이가 안전하게 발행 (at-least-once + 소비자 멱등) |
-| **Kafka (또는 동급 버스)** | outbox → 토픽 → `channel` / `checkin` / 알림 / 정산 consume. 모듈 간 직접 호출 대신 이벤트 연결 ([ADR-002](./wiki/decisions/002-module-boundaries.md) facade vs 이벤트 미결 해소) |
-| **당장 하지 않는 것** | 예약 생성 전체를 사가/카프카만으로 쪼개기 — 코어 불변식(재고·Intent)은 동기 TX 유지, **완료 이후 부수효과**만 비동기로 |
+| **결제 외부 호출 → Outbox** | charge/confirm/cancel·웹훅 후속 등 PG 호출은 TX 커밋 후 outbox 폴러/릴레이가 수행. at-least-once + Intent/멱등키로 중복 청구 방지. 동기 Feign/Rest를 `@Transactional` 안에 두지 않음 |
+| **알림** | 예약 확정·결제 성공·입실 안내 등 **알림 발송도 outbox → (Kafka) → 알림 워커**로만. 이번 스콥 구현 없음 — TODO |
+| **Kafka (또는 동급)** | outbox → 토픽 → `channel` / `checkin` / 정산 consume. 모듈 간 직접 호출 대신 이벤트 연결 ([ADR-002](./wiki/decisions/002-module-boundaries.md)) |
+| **당장 하지 않는 것** | 예약 생성 전체를 사가로 쪼개기 — 재고·Intent 불변식은 동기 TX, **외부 호출·알림·채널 부수효과만** outbox |
 
 ---
 

@@ -1,6 +1,7 @@
 package co.handys.booking.payment.application
 
 import co.handys.booking.payment.fake.FakeIdempotencyStore
+import co.handys.booking.payment.fake.FakeInventoryService
 import co.handys.booking.payment.fake.FakeOtaPayoutRepository
 import co.handys.booking.payment.fake.FakePaymentIntentRepository
 import co.handys.booking.payment.fake.FakeRefundRepository
@@ -10,7 +11,12 @@ import co.handys.booking.payment.fake.FakeSettlementRunRepository
 import co.handys.booking.payment.support.NoOpTransactionManager
 import co.handys.booking.payment.support.TransactionAssertingGateway
 import co.handys.common.domain.SellMode
-import co.handys.booking.payment.fake.FakeInventoryService
+import io.kotest.core.spec.IsolationMode
+import io.kotest.core.spec.style.BehaviorSpec
+import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.nulls.shouldNotBeNull
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.Instant
@@ -18,36 +24,42 @@ import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 
-class SettlementBatchJobLockTest {
-    private val lock = FakeSettlementBatchJobLock()
-    private val now = Instant.parse("2026-10-01T02:00:00Z")
-    private val day = LocalDate.of(2026, 10, 1)
+class SettlementBatchJobLockTest : BehaviorSpec({
+    isolationMode = IsolationMode.InstancePerTest
 
-    @Test
-    fun `second tryAcquire for same jobDate returns null`() {
-        val first = lock.tryAcquire(day, now)
-        assertNotNull(first)
-        assertNull(lock.tryAcquire(day, now.plusSeconds(1)))
-        assertEquals(first.id, lock.findByJobDate(day)?.id)
+    val lock = FakeSettlementBatchJobLock()
+    val now = Instant.parse("2026-10-01T02:00:00Z")
+    val day = LocalDate.of(2026, 10, 1)
+
+    Given("a job lock for a date") {
+        When("tryAcquire is called twice for the same jobDate") {
+            val first = lock.tryAcquire(day, now)
+
+            Then("the second acquire returns null") {
+                first.shouldNotBeNull()
+                lock.tryAcquire(day, now.plusSeconds(1)).shouldBeNull()
+                lock.findByJobDate(day)?.id shouldBe first.id
+            }
+        }
     }
 
-    @Test
-    fun `different jobDates can both acquire`() {
-        assertNotNull(lock.tryAcquire(day, now))
-        assertNotNull(lock.tryAcquire(day.plusDays(1), now))
+    Given("two different jobDates") {
+        When("tryAcquire is called for each") {
+            Then("both can acquire") {
+                lock.tryAcquire(day, now).shouldNotBeNull()
+                lock.tryAcquire(day.plusDays(1), now).shouldNotBeNull()
+            }
+        }
     }
-}
+})
 
-class OwnerSettlementBatchServiceTest {
-    private var now: Instant = Instant.parse("2026-10-01T02:00:00Z")
+class OwnerSettlementBatchServiceTest : BehaviorSpec({
+    isolationMode = IsolationMode.InstancePerTest
 
-    private val clock =
+    var now: Instant = Instant.parse("2026-10-01T02:00:00Z")
+
+    val clock =
         object : Clock() {
             override fun getZone(): ZoneId = ZoneOffset.UTC
 
@@ -56,28 +68,28 @@ class OwnerSettlementBatchServiceTest {
             override fun instant(): Instant = now
         }
 
-    private val inventory = FakeInventoryService()
-    private val reservations = FakeReservationRepository()
-    private val paymentIntents = FakePaymentIntentRepository()
-    private val refunds = FakeRefundRepository()
-    private val payouts = FakeOtaPayoutRepository()
-    private val runs = FakeSettlementRunRepository()
-    private val idempotency = FakeIdempotencyStore()
-    private val lock = FakeSettlementBatchJobLock()
-    private val transactions = TransactionTemplate(NoOpTransactionManager())
-    private val gateway =
+    val inventory = FakeInventoryService()
+    val reservations = FakeReservationRepository()
+    val paymentIntents = FakePaymentIntentRepository()
+    val refunds = FakeRefundRepository()
+    val payouts = FakeOtaPayoutRepository()
+    val runs = FakeSettlementRunRepository()
+    val idempotency = FakeIdempotencyStore()
+    val lock = FakeSettlementBatchJobLock()
+    val transactions = TransactionTemplate(NoOpTransactionManager())
+    val gateway =
         TransactionAssertingGateway(behaviour = {
             ChargeResult.Succeeded(pgPaymentId = "pg_1", pgEventId = "evt_1")
         })
 
-    private val prepare =
+    val prepare =
         CreateDirectReservationService(
             inventory = inventory,
             reservations = reservations,
             paymentIntents = paymentIntents,
             clock = clock,
         )
-    private val charge =
+    val charge =
         ChargePaymentService(
             transactions = transactions,
             gateway = gateway,
@@ -87,7 +99,7 @@ class OwnerSettlementBatchServiceTest {
             inventory = inventory,
             clock = clock,
         )
-    private val settlement =
+    val settlement =
         RunOwnerSettlementService(
             reservations = reservations,
             paymentIntents = paymentIntents,
@@ -96,7 +108,7 @@ class OwnerSettlementBatchServiceTest {
             runs = runs,
             idempotency = idempotency,
         )
-    private val batch =
+    val batch =
         OwnerSettlementBatchService(
             lock = lock,
             settlements = settlement,
@@ -104,8 +116,7 @@ class OwnerSettlementBatchServiceTest {
             clock = clock,
         )
 
-    @Test
-    fun `first run acquires lock and settles previous month`() {
+    Given("a charged reservation in the previous month") {
         now = Instant.parse("2026-09-15T12:00:00Z")
         val created =
             prepare.execute(
@@ -119,17 +130,21 @@ class OwnerSettlementBatchServiceTest {
                 ),
             )
         charge.charge(created.reservationId)
-
         now = Instant.parse("2026-10-01T02:00:00Z")
-        val result = batch.runForDate(LocalDate.of(2026, 10, 1))
-        val completed = assertIs<OwnerSettlementBatchResult.Completed>(result)
-        assertEquals(YearMonth.of(2026, 9), completed.period)
-        assertEquals(1, completed.runs.size)
-        assertEquals(SettlementBatchJobStatus.SUCCEEDED, lock.findByJobDate(LocalDate.of(2026, 10, 1))?.status)
+
+        When("the batch runs for the first time") {
+            val result = batch.runForDate(LocalDate.of(2026, 10, 1))
+
+            Then("it acquires the lock and settles the previous month") {
+                val completed = result.shouldBeInstanceOf<OwnerSettlementBatchResult.Completed>()
+                completed.period shouldBe YearMonth.of(2026, 9)
+                completed.runs.size shouldBe 1
+                lock.findByJobDate(LocalDate.of(2026, 10, 1))?.status shouldBe SettlementBatchJobStatus.SUCCEEDED
+            }
+        }
     }
 
-    @Test
-    fun `second run same jobDate is skipped without new settlement`() {
+    Given("a batch that already completed for the jobDate") {
         now = Instant.parse("2026-09-15T12:00:00Z")
         val created =
             prepare.execute(
@@ -143,14 +158,18 @@ class OwnerSettlementBatchServiceTest {
                 ),
             )
         charge.charge(created.reservationId)
-
         now = Instant.parse("2026-10-01T02:00:00Z")
         val jobDate = LocalDate.of(2026, 10, 1)
-        assertIs<OwnerSettlementBatchResult.Completed>(batch.runForDate(jobDate))
+        batch.runForDate(jobDate).shouldBeInstanceOf<OwnerSettlementBatchResult.Completed>()
         val runCountAfterFirst = runs.findByKey("stl:prop-1:2026-09:ps-v1")
 
-        val second = batch.runForDate(jobDate)
-        assertIs<OwnerSettlementBatchResult.Skipped>(second)
-        assertEquals(runCountAfterFirst?.runId, runs.findByKey("stl:prop-1:2026-09:ps-v1")?.runId)
+        When("the batch runs again for the same jobDate") {
+            val second = batch.runForDate(jobDate)
+
+            Then("it is skipped without a new settlement") {
+                second.shouldBeInstanceOf<OwnerSettlementBatchResult.Skipped>()
+                runs.findByKey("stl:prop-1:2026-09:ps-v1")?.runId shouldBe runCountAfterFirst?.runId
+            }
+        }
     }
-}
+})

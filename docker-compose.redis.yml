@@ -1,0 +1,21 @@
+# ADR-004 — Redis hot layer for inventory (AOF everysec + RDB).
+# Usage: docker compose -f docker-compose.redis.yml up -d
+# Then: handys.inventory.redis.enabled=true (or --spring.profiles.active=redis)
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./infra/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - handys-redis-data:/data
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  handys-redis-data:

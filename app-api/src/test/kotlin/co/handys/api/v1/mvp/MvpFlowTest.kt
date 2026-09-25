@@ -1,6 +1,7 @@
 package co.handys.api.v1.mvp
 
-import org.junit.jupiter.api.Test
+import io.kotest.core.spec.style.BehaviorSpec
+import io.kotest.extensions.spring.SpringExtension
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
@@ -14,56 +15,73 @@ import java.time.ZoneId
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class MvpFlowTest @Autowired constructor(
-    private val mockMvc: MockMvc,
-    private val clock: Clock,
-) {
-    private fun today(): LocalDate = LocalDate.ofInstant(clock.instant(), ZoneId.of("Asia/Seoul"))
+class MvpFlowTest : BehaviorSpec() {
+    override fun extensions() = listOf(SpringExtension)
 
-    @Test
-    fun `quote shows lead gate on checkin day when sold out`() {
-        val today = today()
-        mockMvc.get("/api/v1/channels/direct/quote") {
-            param("propertyId", "P-SEOUL-01")
-            param("roomTypeId", "RT-DELUXE")
-            param("date", today.toString())
-        }.andExpect {
-            status { isOk() }
-            jsonPath("$.available") { value(0) }
-            jsonPath("$.reason") { value("OVERBOOK_GATE_LEAD") }
-        }
-    }
+    @Autowired
+    lateinit var mockMvc: MockMvc
 
-    @Test
-    fun `key blocked when room dirty`() {
-        mockMvc.post("/api/v1/reservations/R-1001/key") {
-            accept = MediaType.APPLICATION_JSON
-        }.andExpect {
-            status { isUnprocessableEntity() }
-            jsonPath("$.reason") { value("READINESS_NOT_MET") }
-            jsonPath("$.blocker") { value("room_ready") }
-        }
-    }
+    @Autowired
+    lateinit var clock: Clock
 
-    @Test
-    fun `book rejected when inventory full on checkin day`() {
-        val today = today()
-        mockMvc.post("/api/v1/channels/direct/bookings") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """
-                {
-                  "propertyId":"P-SEOUL-01",
-                  "roomTypeId":"RT-DELUXE",
-                  "checkIn":"$today",
-                  "checkOut":"${today.plusDays(1)}",
-                  "guestName":"테스트",
-                  "guestPhone":"01000000000",
-                  "guestEmail":"t@example.com"
+    init {
+        fun today(): LocalDate = LocalDate.ofInstant(clock.instant(), ZoneId.of("Asia/Seoul"))
+
+        Given("check-in day inventory is sold out") {
+            When("a direct quote is requested") {
+                Then("it shows the lead gate") {
+                    val today = today()
+                    mockMvc.get("/api/v1/channels/direct/quote") {
+                        param("propertyId", "P-SEOUL-01")
+                        param("roomTypeId", "RT-DELUXE")
+                        param("date", today.toString())
+                    }.andExpect {
+                        status { isOk() }
+                        jsonPath("$.available") { value(0) }
+                        jsonPath("$.reason") { value("OVERBOOK_GATE_LEAD") }
+                    }
                 }
-            """.trimIndent()
-        }.andExpect {
-            status { isUnprocessableEntity() }
-            jsonPath("$.reason") { value("OVERBOOK_GATE_LEAD") }
+            }
+        }
+
+        Given("a reservation whose room is dirty") {
+            When("a key is requested") {
+                Then("it is blocked with readiness not met") {
+                    mockMvc.post("/api/v1/reservations/R-1001/key") {
+                        accept = MediaType.APPLICATION_JSON
+                    }.andExpect {
+                        status { isUnprocessableEntity() }
+                        jsonPath("$.reason") { value("READINESS_NOT_MET") }
+                        jsonPath("$.blocker") { value("room_ready") }
+                    }
+                }
+            }
+        }
+
+        Given("check-in day inventory is full") {
+            When("a booking is attempted") {
+                Then("it is rejected with the lead gate") {
+                    val today = today()
+                    mockMvc.post("/api/v1/channels/direct/bookings") {
+                        contentType = MediaType.APPLICATION_JSON
+                        content =
+                            """
+                            {
+                              "propertyId":"P-SEOUL-01",
+                              "roomTypeId":"RT-DELUXE",
+                              "checkIn":"$today",
+                              "checkOut":"${today.plusDays(1)}",
+                              "guestName":"테스트",
+                              "guestPhone":"01000000000",
+                              "guestEmail":"t@example.com"
+                            }
+                            """.trimIndent()
+                    }.andExpect {
+                        status { isUnprocessableEntity() }
+                        jsonPath("$.reason") { value("OVERBOOK_GATE_LEAD") }
+                    }
+                }
+            }
         }
     }
 }

@@ -1,0 +1,12 @@
+handys:
+  inventory:
+    redis:
+      enabled: true
+      instance-id: batch-1
+
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 1

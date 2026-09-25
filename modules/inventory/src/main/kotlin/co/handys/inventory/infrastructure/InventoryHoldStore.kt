@@ -9,13 +9,17 @@ import co.handys.inventory.domain.StayNights
 import co.handys.property.api.PropertyApi
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 
 /**
- * Postgres SSOT for holds (ADR-004). Called only from [co.handys.inventory.infrastructure.redis.InventoryHoldService]
- * after optional Redis preclaim. Redis must not be invoked here.
+ * Postgres SSOT for holds (ADR-004). Redis must not be invoked here —
+ * pass after-commit / after-rollback hooks from the orchestrator.
  */
 @Service
 class InventoryHoldStore(
@@ -34,10 +38,11 @@ class InventoryHoldStore(
         val mode: SellMode,
         val nights: List<LocalDate>,
         val status: String,
+        val expiresAt: Instant,
     )
 
     @Transactional
-    fun hold(cmd: HoldCommand, holdId: String): HoldResult {
+    fun hold(cmd: HoldCommand, holdId: String, onRollback: (() -> Unit)? = null): HoldResult {
         val nights = StayNights.of(cmd.checkIn, cmd.checkOut)
         if (nights.isEmpty()) throw IllegalArgumentException("empty stay nights")
 
@@ -63,15 +68,22 @@ class InventoryHoldStore(
                 status = "HELD",
             ),
         )
+        if (onRollback != null) {
+            registerAfterRollback(onRollback)
+        }
         return HoldResult(holdId, cmd.expiresAt)
     }
 
     @Transactional
-    fun confirmHold(holdId: String): HoldSnapshot {
+    fun confirmHold(holdId: String, onCommit: ((HoldSnapshot) -> Unit)? = null): HoldSnapshot {
         val hold = holdRepo.findForUpdate(holdId)
             ?: throw IllegalArgumentException("unknown holdId: $holdId")
         when (hold.status) {
-            "CONFIRMED" -> return snapshot(hold)
+            "CONFIRMED" -> {
+                val snap = snapshot(hold)
+                onCommit?.let { registerAfterCommit { it(snap) } }
+                return snap
+            }
             "RELEASED" -> throw IllegalStateException("hold already released: $holdId")
         }
         val nights = StayNights.of(hold.checkIn, hold.checkOut)
@@ -96,11 +108,13 @@ class InventoryHoldStore(
         }
         hold.status = "CONFIRMED"
         holdRepo.save(hold)
-        return snapshot(hold)
+        val snap = snapshot(hold)
+        onCommit?.let { registerAfterCommit { it(snap) } }
+        return snap
     }
 
     @Transactional
-    fun releaseHold(holdId: String): HoldSnapshot? {
+    fun releaseHold(holdId: String, onCommit: ((HoldSnapshot) -> Unit)? = null): HoldSnapshot? {
         val hold = holdRepo.findForUpdate(holdId)
             ?: throw IllegalArgumentException("unknown holdId: $holdId")
         if (hold.status == "RELEASED") return null
@@ -111,6 +125,7 @@ class InventoryHoldStore(
         hold.status = "RELEASED"
         holdRepo.save(hold)
         holdRepo.delete(hold)
+        onCommit?.let { registerAfterCommit { it(snap) } }
         return snap
     }
 
@@ -119,21 +134,27 @@ class InventoryHoldStore(
         holdRepo.findById(holdId).map { snapshot(it) }.orElse(null)
 
     @Transactional(readOnly = true)
-    fun listExpiredHeld(now: java.time.Instant): List<HoldSnapshot> =
+    fun listExpiredHeld(now: Instant): List<HoldSnapshot> =
         holdRepo.findExpiredHeld(now).map { snapshot(it) }
 
     @Transactional(readOnly = true)
-    fun listActiveHeld(now: java.time.Instant): List<HoldSnapshot> =
+    fun listActiveHeld(now: Instant): List<HoldSnapshot> =
         holdRepo.findActiveHeld(now).map { snapshot(it) }
 
-    fun maxSellableForNight(cmd: HoldCommand, night: LocalDate, sold: Int): Int {
+    fun approxCapRemaining(cmd: HoldCommand, night: LocalDate): Int {
+        val sold = soldRepo.findById(soldId(cmd.propertyId, cmd.roomTypeOrUnitId, night))
+            .map { it.sold }.orElse(0)
+        val held = holdRepo.countHeldCoveringNight(cmd.propertyId, cmd.roomTypeOrUnitId, night).toInt()
+        return maxOf(0, maxSellableForNight(cmd, night, sold) - sold - held)
+    }
+
+    private fun maxSellableForNight(cmd: HoldCommand, night: LocalDate, sold: Int): Int {
         val today = LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC)
-        val daysUntil = java.time.temporal.ChronoUnit.DAYS.between(today, night).toInt()
+        val daysUntil = ChronoUnit.DAYS.between(today, night).toInt()
         return when (cmd.mode) {
             SellMode.SPECIFIC_UNIT -> 1
             SellMode.HOTEL_POOL -> {
-                val rt = propertyApi.getRoomType(cmd.roomTypeOrUnitId)
-                    ?: throw IllegalArgumentException("unknown roomType: ${cmd.roomTypeOrUnitId}")
+                val rt = resolvePoolRoomType(cmd.roomTypeOrUnitId)
                 OverbookGate.evaluate(
                     GateInput(
                         mode = cmd.mode,
@@ -147,13 +168,6 @@ class InventoryHoldStore(
                 ).maxSellable
             }
         }
-    }
-
-    fun approxCapRemaining(cmd: HoldCommand, night: LocalDate): Int {
-        val sold = soldRepo.findById(soldId(cmd.propertyId, cmd.roomTypeOrUnitId, night))
-            .map { it.sold }.orElse(0)
-        val held = holdRepo.countHeldCoveringNight(cmd.propertyId, cmd.roomTypeOrUnitId, night).toInt()
-        return maxOf(0, maxSellableForNight(cmd, night, sold) - sold - held)
     }
 
     private fun insertUnitNights(cmd: HoldCommand, holdId: String, nights: List<LocalDate>) {
@@ -176,24 +190,23 @@ class InventoryHoldStore(
     }
 
     private fun assertPoolCapacity(cmd: HoldCommand, nights: List<LocalDate>) {
-        val rt = propertyApi.getRoomType(cmd.roomTypeOrUnitId)
-            ?: throw IllegalArgumentException("unknown roomType: ${cmd.roomTypeOrUnitId}")
+        val rt = resolvePoolRoomType(cmd.roomTypeOrUnitId)
         val today = LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC)
         for (night in nights) {
-            val soldId = soldId(cmd.propertyId, cmd.roomTypeOrUnitId, night)
-            var row = soldRepo.findForUpdate(soldId)
+            val sid = soldId(cmd.propertyId, cmd.roomTypeOrUnitId, night)
+            var row = soldRepo.findForUpdate(sid)
             if (row == null) {
                 soldRepo.save(
-                    InventorySoldEntity(soldId, cmd.propertyId, cmd.roomTypeOrUnitId, night, 0),
+                    InventorySoldEntity(sid, cmd.propertyId, cmd.roomTypeOrUnitId, night, 0),
                 )
-                row = soldRepo.findForUpdate(soldId)!!
+                row = soldRepo.findForUpdate(sid)!!
             }
             val heldCnt = holdRepo.countHeldCoveringNight(
                 cmd.propertyId,
                 cmd.roomTypeOrUnitId,
                 night,
             ).toInt()
-            val daysUntil = java.time.temporal.ChronoUnit.DAYS.between(today, night).toInt()
+            val daysUntil = ChronoUnit.DAYS.between(today, night).toInt()
             val maxSellable = OverbookGate.evaluate(
                 GateInput(
                     mode = cmd.mode,
@@ -211,6 +224,23 @@ class InventoryHoldStore(
         }
     }
 
+    /**
+     * Unknown room-type id (e.g. payment IT stub): wide capacity, overbook off.
+     * Production paths should always resolve a real [co.handys.property.api.RoomTypeView].
+     */
+    private fun resolvePoolRoomType(roomTypeId: String): co.handys.property.api.RoomTypeView =
+        propertyApi.getRoomType(roomTypeId)
+            ?: co.handys.property.api.RoomTypeView(
+                id = roomTypeId,
+                propertyId = "",
+                mode = SellMode.HOTEL_POOL,
+                capacity = 9_999,
+                minLeadDays = 0,
+                minCapacityForOverbook = 9_999,
+                overbookRate = 0.0,
+                listPrice = null,
+            )
+
     private fun snapshot(hold: InventoryHoldEntity) = HoldSnapshot(
         holdId = hold.holdId,
         propertyId = hold.propertyId,
@@ -220,7 +250,31 @@ class InventoryHoldStore(
         mode = hold.mode,
         nights = StayNights.of(hold.checkIn, hold.checkOut),
         status = hold.status,
+        expiresAt = hold.expiresAt,
     )
+
+    private fun registerAfterCommit(action: () -> Unit) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action()
+            return
+        }
+        TransactionSynchronizationManager.registerSynchronization(
+            object : TransactionSynchronization {
+                override fun afterCommit() = action()
+            },
+        )
+    }
+
+    private fun registerAfterRollback(action: () -> Unit) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) return
+        TransactionSynchronizationManager.registerSynchronization(
+            object : TransactionSynchronization {
+                override fun afterCompletion(status: Int) {
+                    if (status != TransactionSynchronization.STATUS_COMMITTED) action()
+                }
+            },
+        )
+    }
 
     companion object {
         fun slotKey(cmd: HoldCommand) =

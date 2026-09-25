@@ -2,6 +2,7 @@ package co.handys.booking.payment.infrastructure
 
 import co.handys.booking.payment.application.ChargeRequest
 import co.handys.booking.payment.application.ChargeResult
+import io.kotest.core.spec.IsolationMode
 import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
@@ -9,6 +10,8 @@ import io.kotest.matchers.string.shouldStartWith
 import io.kotest.matchers.types.shouldBeInstanceOf
 
 class MockPaymentGatewayTest : BehaviorSpec({
+    isolationMode = IsolationMode.InstancePerTest
+
     val gateway = MockPaymentGateway(delayMillis = 25)
 
     afterEach {

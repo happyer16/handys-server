@@ -4,12 +4,20 @@ import co.handys.booking.domain.ReservationStatus
 import co.handys.booking.payment.domain.IdempotencyKeys
 import co.handys.booking.payment.domain.PaymentIntentStatus
 import co.handys.booking.payment.fake.FakeIdempotencyStore
+import co.handys.booking.payment.fake.FakeInventoryService
 import co.handys.booking.payment.fake.FakePaymentIntentRepository
 import co.handys.booking.payment.fake.FakeReservationRepository
 import co.handys.booking.payment.support.NoOpTransactionManager
 import co.handys.booking.payment.support.TransactionAssertingGateway
 import co.handys.common.domain.SellMode
-import co.handys.booking.payment.fake.FakeInventoryService
+import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.core.spec.IsolationMode
+import io.kotest.core.spec.style.BehaviorSpec
+import io.kotest.matchers.nulls.shouldNotBeNull
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotBeBlank
+import io.kotest.matchers.types.shouldBeInstanceOf
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
@@ -17,18 +25,13 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertIs
-import kotlin.test.assertNotNull
-import kotlin.test.assertTrue
 
-class ChargePaymentServiceTest {
-    private var now: Instant = Instant.parse("2026-09-25T12:00:00Z")
+class ChargePaymentServiceTest : BehaviorSpec({
+    isolationMode = IsolationMode.InstancePerTest
 
-    private val clock =
+    var now: Instant = Instant.parse("2026-09-25T12:00:00Z")
+
+    val clock =
         object : Clock() {
             override fun getZone(): ZoneId = ZoneOffset.UTC
 
@@ -37,16 +40,16 @@ class ChargePaymentServiceTest {
             override fun instant(): Instant = now
         }
 
-    private val inventory = co.handys.booking.payment.fake.FakeInventoryService()
-    private val reservations = FakeReservationRepository()
-    private val paymentIntents = FakePaymentIntentRepository()
-    private val idempotency = FakeIdempotencyStore()
-    private val transactions = TransactionTemplate(NoOpTransactionManager())
+    val inventory = FakeInventoryService()
+    val reservations = FakeReservationRepository()
+    val paymentIntents = FakePaymentIntentRepository()
+    val idempotency = FakeIdempotencyStore()
+    val transactions = TransactionTemplate(NoOpTransactionManager())
 
-    private var gatewayBehaviour: (ChargeRequest) -> ChargeResult = { succeeded() }
-    private val gateway = TransactionAssertingGateway(behaviour = { gatewayBehaviour(it) })
+    var gatewayBehaviour: (ChargeRequest) -> ChargeResult = { succeeded() }
+    val gateway = TransactionAssertingGateway(behaviour = { gatewayBehaviour(it) })
 
-    private val service =
+    val service =
         ChargePaymentService(
             transactions = transactions,
             gateway = gateway,
@@ -57,7 +60,7 @@ class ChargePaymentServiceTest {
             clock = clock,
         )
 
-    private val prepareService =
+    val prepareService =
         CreateDirectReservationService(
             inventory = inventory,
             reservations = reservations,
@@ -65,72 +68,105 @@ class ChargePaymentServiceTest {
             clock = clock,
         )
 
-    @Test
-    fun `transaction probe is live - the template really activates a transaction`() {
-        assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
-        val insideTransaction = transactions.execute { TransactionSynchronizationManager.isActualTransactionActive() }
-        assertEquals(true, insideTransaction)
-        assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
-    }
+    fun prepareReservation(): String =
+        prepareService
+            .execute(
+                CreateDirectReservationCommand(
+                    propertyId = "property-1",
+                    roomTypeOrUnitId = "deluxe",
+                    checkIn = LocalDate.of(2026, 10, 1),
+                    checkOut = LocalDate.of(2026, 10, 3),
+                    amountWon = 120_000L,
+                    mode = SellMode.HOTEL_POOL,
+                ),
+            ).reservationId
 
-    @Test
-    fun `five charge calls invoke gateway only once`() {
-        val reservationId = prepareReservation()
+    fun succeeded() = ChargeResult.Succeeded(pgPaymentId = "pg_test_1", pgEventId = "evt_test_1")
 
-        val results = (1..5).map { service.charge(reservationId) }
-
-        assertEquals(1, gateway.chargeCount)
-        val first = assertIs<ChargePaymentResult.JustSucceeded>(results.first())
-        results.drop(1).forEach {
-            val replay = assertIs<ChargePaymentResult.AlreadySucceeded>(it)
-            assertEquals(first.pgPaymentId, replay.pgPaymentId)
+    Given("a TransactionTemplate") {
+        When("execute runs a callback") {
+            Then("the template really activates a transaction") {
+                TransactionSynchronizationManager.isActualTransactionActive() shouldBe false
+                val insideTransaction =
+                    transactions.execute { TransactionSynchronizationManager.isActualTransactionActive() }
+                insideTransaction shouldBe true
+                TransactionSynchronizationManager.isActualTransactionActive() shouldBe false
+            }
         }
     }
 
-    @Test
-    fun `succeeded charge confirms inventory and reservation in one finalize step`() {
+    Given("a prepared reservation") {
         val reservationId = prepareReservation()
-        val holdId = assertNotNull(reservations.findById(reservationId)).holdId
 
-        val result = assertIs<ChargePaymentResult.JustSucceeded>(service.charge(reservationId))
+        When("charge is called five times") {
+            val results = (1..5).map { service.charge(reservationId) }
 
-        assertTrue(inventory.isConfirmed(holdId))
-        assertEquals(ReservationStatus.CONFIRMED, assertNotNull(reservations.findById(reservationId)).status)
-
-        val intent = assertNotNull(paymentIntents.findByIdempotencyKey(IdempotencyKeys.chargeFull(reservationId)))
-        assertEquals(PaymentIntentStatus.Succeeded, intent.status)
-        assertEquals(result.pgPaymentId, intent.pgPaymentId)
-
-        val record = assertIs<BeginResult.Existing>(idempotency.begin(IdempotencyKeys.chargeFull(reservationId)))
-        assertTrue(record.entry.terminal)
-        assertTrue(assertNotNull(record.entry.payload).contains(result.pgPaymentId))
+            Then("the gateway is invoked only once and later calls replay") {
+                gateway.chargeCount shouldBe 1
+                val first = results.first().shouldBeInstanceOf<ChargePaymentResult.JustSucceeded>()
+                results.drop(1).forEach {
+                    val replay = it.shouldBeInstanceOf<ChargePaymentResult.AlreadySucceeded>()
+                    replay.pgPaymentId shouldBe first.pgPaymentId
+                }
+            }
+        }
     }
 
-    @Test
-    fun `already succeeded intent replays the stored response without calling the gateway`() {
+    Given("a prepared reservation for finalize") {
         val reservationId = prepareReservation()
-        val first = assertIs<ChargePaymentResult.JustSucceeded>(service.charge(reservationId))
+        val holdId = reservations.findById(reservationId).shouldNotBeNull().holdId
 
-        val replay = assertIs<ChargePaymentResult.AlreadySucceeded>(service.charge(reservationId))
+        When("a succeeded charge runs") {
+            val result = service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.JustSucceeded>()
 
-        assertEquals(first.pgPaymentId, replay.pgPaymentId)
-        assertEquals(1, gateway.chargeCount)
+            Then("inventory and reservation confirm in one finalize step") {
+                inventory.isConfirmed(holdId) shouldBe true
+                reservations.findById(reservationId).shouldNotBeNull().status shouldBe ReservationStatus.CONFIRMED
+
+                val intent =
+                    paymentIntents.findByIdempotencyKey(IdempotencyKeys.chargeFull(reservationId)).shouldNotBeNull()
+                intent.status shouldBe PaymentIntentStatus.Succeeded
+                intent.pgPaymentId shouldBe result.pgPaymentId
+
+                val record =
+                    idempotency.begin(IdempotencyKeys.chargeFull(reservationId))
+                        .shouldBeInstanceOf<BeginResult.Existing>()
+                record.entry.terminal shouldBe true
+                record.entry.payload.shouldNotBeNull().shouldContain(result.pgPaymentId)
+            }
+        }
     }
 
-    @Test
-    fun `in-flight idempotency key reports progress instead of charging again`() {
+    Given("an already succeeded intent") {
+        val reservationId = prepareReservation()
+        val first = service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.JustSucceeded>()
+
+        When("charge is called again") {
+            val replay = service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.AlreadySucceeded>()
+
+            Then("it replays the stored response without calling the gateway") {
+                replay.pgPaymentId shouldBe first.pgPaymentId
+                gateway.chargeCount shouldBe 1
+            }
+        }
+    }
+
+    Given("an in-flight idempotency key") {
         val reservationId = prepareReservation()
         val key = IdempotencyKeys.chargeFull(reservationId)
-        assertIs<BeginResult.Acquired>(idempotency.begin(key))
+        idempotency.begin(key).shouldBeInstanceOf<BeginResult.Acquired>()
 
-        val result = assertIs<ChargePaymentResult.InProgress>(service.charge(reservationId))
+        When("charge is called") {
+            val result = service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.InProgress>()
 
-        assertEquals(key, result.idempotencyKey)
-        assertEquals(0, gateway.chargeCount)
+            Then("it reports progress instead of charging again") {
+                result.idempotencyKey shouldBe key
+                gateway.chargeCount shouldBe 0
+            }
+        }
     }
 
-    @Test
-    fun `re-entry while the gateway call is in flight does not charge twice`() {
+    Given("a re-entrant charge while the gateway call is in flight") {
         val reservationId = prepareReservation()
         var reentrant: ChargePaymentResult? = null
         gatewayBehaviour = {
@@ -138,170 +174,191 @@ class ChargePaymentServiceTest {
             succeeded()
         }
 
-        val result = assertIs<ChargePaymentResult.JustSucceeded>(service.charge(reservationId))
+        When("charge is called") {
+            val result = service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.JustSucceeded>()
 
-        assertEquals(1, gateway.chargeCount)
-        assertIs<ChargePaymentResult.InProgress>(reentrant)
-        assertEquals(ReservationStatus.CONFIRMED, assertNotNull(reservations.findById(reservationId)).status)
-        assertTrue(result.pgPaymentId.isNotBlank())
+            Then("it does not charge twice") {
+                gateway.chargeCount shouldBe 1
+                reentrant.shouldBeInstanceOf<ChargePaymentResult.InProgress>()
+                reservations.findById(reservationId).shouldNotBeNull().status shouldBe ReservationStatus.CONFIRMED
+                result.pgPaymentId.shouldNotBeBlank()
+            }
+        }
     }
 
-    @Test
-    fun `declined charge leaves the reservation pending and the hold unconfirmed`() {
+    Given("a declined charge") {
         val reservationId = prepareReservation()
-        val holdId = assertNotNull(reservations.findById(reservationId)).holdId
+        val holdId = reservations.findById(reservationId).shouldNotBeNull().holdId
         gatewayBehaviour = { ChargeResult.Declined("insufficient_funds") }
 
-        val result = assertIs<ChargePaymentResult.Declined>(service.charge(reservationId))
+        When("charge is called") {
+            val result = service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.Declined>()
 
-        assertEquals("insufficient_funds", result.reason)
-        assertFalse(inventory.isConfirmed(holdId))
-        assertEquals(ReservationStatus.PENDING_PAYMENT, assertNotNull(reservations.findById(reservationId)).status)
+            Then("the reservation stays pending and the hold stays unconfirmed") {
+                result.reason shouldBe "insufficient_funds"
+                inventory.isConfirmed(holdId) shouldBe false
+                reservations.findById(reservationId).shouldNotBeNull().status shouldBe ReservationStatus.PENDING_PAYMENT
 
-        val intent = assertNotNull(paymentIntents.findByIdempotencyKey(IdempotencyKeys.chargeFull(reservationId)))
-        assertEquals(PaymentIntentStatus.RequiresAction, intent.status)
+                val intent =
+                    paymentIntents.findByIdempotencyKey(IdempotencyKeys.chargeFull(reservationId)).shouldNotBeNull()
+                intent.status shouldBe PaymentIntentStatus.RequiresAction
 
-        // A decline moved no money, so the key must be re-acquirable rather than frozen as terminal.
-        assertIs<BeginResult.Acquired>(idempotency.begin(IdempotencyKeys.chargeFull(reservationId)))
+                // A decline moved no money, so the key must be re-acquirable rather than frozen as terminal.
+                idempotency.begin(IdempotencyKeys.chargeFull(reservationId))
+                    .shouldBeInstanceOf<BeginResult.Acquired>()
+            }
+        }
     }
 
-    @Test
-    fun `retry after decline reaches the gateway again and can succeed`() {
+    Given("a previously declined charge") {
         val reservationId = prepareReservation()
-        val holdId = assertNotNull(reservations.findById(reservationId)).holdId
+        val holdId = reservations.findById(reservationId).shouldNotBeNull().holdId
         gatewayBehaviour = { ChargeResult.Declined("insufficient_funds") }
-        assertIs<ChargePaymentResult.Declined>(service.charge(reservationId))
-
+        service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.Declined>()
         gatewayBehaviour = { succeeded() }
-        val retry = assertIs<ChargePaymentResult.JustSucceeded>(service.charge(reservationId))
 
-        assertEquals(2, gateway.chargeCount)
-        assertEquals("pg_test_1", retry.pgPaymentId)
-        assertTrue(inventory.isConfirmed(holdId))
-        assertEquals(ReservationStatus.CONFIRMED, assertNotNull(reservations.findById(reservationId)).status)
+        When("charge is retried") {
+            val retry = service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.JustSucceeded>()
+
+            Then("it reaches the gateway again and can succeed") {
+                gateway.chargeCount shouldBe 2
+                retry.pgPaymentId shouldBe "pg_test_1"
+                inventory.isConfirmed(holdId) shouldBe true
+                reservations.findById(reservationId).shouldNotBeNull().status shouldBe ReservationStatus.CONFIRMED
+            }
+        }
     }
 
-    @Test
-    fun `a declined retry still holds off a concurrent caller`() {
+    Given("a declined charge then a concurrent retry") {
         val reservationId = prepareReservation()
         gatewayBehaviour = { ChargeResult.Declined("insufficient_funds") }
-        assertIs<ChargePaymentResult.Declined>(service.charge(reservationId))
+        service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.Declined>()
 
         var reentrant: ChargePaymentResult? = null
         gatewayBehaviour = {
             reentrant = service.charge(reservationId)
             succeeded()
         }
-        assertIs<ChargePaymentResult.JustSucceeded>(service.charge(reservationId))
 
-        assertIs<ChargePaymentResult.InProgress>(reentrant)
-        assertEquals(2, gateway.chargeCount)
+        When("charge is retried") {
+            service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.JustSucceeded>()
+
+            Then("the concurrent caller is still held off") {
+                reentrant.shouldBeInstanceOf<ChargePaymentResult.InProgress>()
+                gateway.chargeCount shouldBe 2
+            }
+        }
     }
 
-    @Test
-    fun `expired reservation is rejected before the gateway`() {
+    Given("an expired reservation") {
         val reservationId = prepareReservation()
-        val reservation = assertNotNull(reservations.findById(reservationId))
+        val reservation = reservations.findById(reservationId).shouldNotBeNull()
         reservations.save(reservation.copy(status = ReservationStatus.EXPIRED))
 
-        val result = assertIs<ChargePaymentResult.Expired>(service.charge(reservationId))
+        When("charge is called") {
+            val result = service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.Expired>()
 
-        assertEquals(ChargePaymentResult.INTENT_EXPIRED, result.code)
-        assertEquals(0, gateway.chargeCount)
+            Then("it is rejected before the gateway") {
+                result.code shouldBe ChargePaymentResult.INTENT_EXPIRED
+                gateway.chargeCount shouldBe 0
+            }
+        }
     }
 
-    @Test
-    fun `charge after the intent ttl is rejected before the gateway`() {
+    Given("a reservation whose intent TTL has elapsed") {
         val reservationId = prepareReservation()
         now = now.plusSeconds(16 * 60)
 
-        assertIs<ChargePaymentResult.Expired>(service.charge(reservationId))
+        When("charge is called") {
+            service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.Expired>()
 
-        assertEquals(0, gateway.chargeCount)
+            Then("it is rejected before the gateway") {
+                gateway.chargeCount shouldBe 0
+            }
+        }
     }
 
-    @Test
-    fun `ttl elapsing during the gateway call does not silently confirm`() {
+    Given("a charge whose TTL elapses during the gateway call") {
         val reservationId = prepareReservation()
-        val holdId = assertNotNull(reservations.findById(reservationId)).holdId
+        val holdId = reservations.findById(reservationId).shouldNotBeNull().holdId
         gatewayBehaviour = {
             now = now.plusSeconds(16 * 60)
             succeeded()
         }
 
-        val result = assertIs<ChargePaymentResult.LateSuccessMismatch>(service.charge(reservationId))
+        When("charge is called") {
+            val result = service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.LateSuccessMismatch>()
 
-        assertEquals(ChargePaymentResult.LATE_SUCCESS_AFTER_EXPIRE, result.code)
-        assertEquals("pg_test_1", result.pgPaymentId)
-        assertFalse(inventory.isConfirmed(holdId))
-        assertEquals(ReservationStatus.PENDING_PAYMENT, assertNotNull(reservations.findById(reservationId)).status)
+            Then("it does not silently confirm") {
+                result.code shouldBe ChargePaymentResult.LATE_SUCCESS_AFTER_EXPIRE
+                result.pgPaymentId shouldBe "pg_test_1"
+                inventory.isConfirmed(holdId) shouldBe false
+                reservations.findById(reservationId).shouldNotBeNull().status shouldBe ReservationStatus.PENDING_PAYMENT
 
-        // The money moved, so the intent keeps the gateway id and the record is terminal: never charge again.
-        val intent = assertNotNull(paymentIntents.findByIdempotencyKey(IdempotencyKeys.chargeFull(reservationId)))
-        assertEquals(PaymentIntentStatus.Succeeded, intent.status)
-        assertEquals("pg_test_1", intent.pgPaymentId)
-        val record = assertIs<BeginResult.Existing>(idempotency.begin(IdempotencyKeys.chargeFull(reservationId)))
-        assertTrue(record.entry.terminal)
+                // The money moved, so the intent keeps the gateway id and the record is terminal: never charge again.
+                val intent =
+                    paymentIntents.findByIdempotencyKey(IdempotencyKeys.chargeFull(reservationId)).shouldNotBeNull()
+                intent.status shouldBe PaymentIntentStatus.Succeeded
+                intent.pgPaymentId shouldBe "pg_test_1"
+                val record =
+                    idempotency.begin(IdempotencyKeys.chargeFull(reservationId))
+                        .shouldBeInstanceOf<BeginResult.Existing>()
+                record.entry.terminal shouldBe true
+            }
+        }
     }
 
-    @Test
-    fun `a reservation expired during the gateway call does not confirm the hold`() {
+    Given("a reservation expired during the gateway call") {
         val reservationId = prepareReservation()
-        val holdId = assertNotNull(reservations.findById(reservationId)).holdId
+        val holdId = reservations.findById(reservationId).shouldNotBeNull().holdId
         gatewayBehaviour = {
-            val reservation = assertNotNull(reservations.findById(reservationId))
+            val reservation = reservations.findById(reservationId).shouldNotBeNull()
             reservations.save(reservation.copy(status = ReservationStatus.EXPIRED))
             inventory.releaseHold(holdId)
             succeeded()
         }
 
-        assertIs<ChargePaymentResult.LateSuccessMismatch>(service.charge(reservationId))
+        When("charge is called") {
+            service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.LateSuccessMismatch>()
 
-        assertFalse(inventory.isConfirmed(holdId))
-        assertEquals(ReservationStatus.EXPIRED, assertNotNull(reservations.findById(reservationId)).status)
+            Then("it does not confirm the hold") {
+                inventory.isConfirmed(holdId) shouldBe false
+                reservations.findById(reservationId).shouldNotBeNull().status shouldBe ReservationStatus.EXPIRED
+            }
+        }
     }
 
-    @Test
-    fun `a mismatched charge replays as a mismatch not as a success`() {
+    Given("a mismatched charge already recorded") {
         val reservationId = prepareReservation()
         gatewayBehaviour = {
-            val reservation = assertNotNull(reservations.findById(reservationId))
+            val reservation = reservations.findById(reservationId).shouldNotBeNull()
             reservations.save(reservation.copy(status = ReservationStatus.EXPIRED))
             succeeded()
         }
-        assertIs<ChargePaymentResult.LateSuccessMismatch>(service.charge(reservationId))
+        service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.LateSuccessMismatch>()
 
-        val replay = assertIs<ChargePaymentResult.LateSuccessMismatch>(service.charge(reservationId))
+        When("charge is called again") {
+            val replay = service.charge(reservationId).shouldBeInstanceOf<ChargePaymentResult.LateSuccessMismatch>()
 
-        assertEquals("pg_test_1", replay.pgPaymentId)
-        assertEquals(1, gateway.chargeCount)
+            Then("it replays as a mismatch not as a success") {
+                replay.pgPaymentId shouldBe "pg_test_1"
+                gateway.chargeCount shouldBe 1
+            }
+        }
     }
 
-    @Test
-    fun `charge refuses to run inside an outer transaction`() {
+    Given("an outer transaction is already active") {
         val reservationId = prepareReservation()
 
-        val failure =
-            assertFailsWith<IllegalStateException> {
-                transactions.execute { service.charge(reservationId) }
+        When("charge is called inside that transaction") {
+            Then("it refuses to run") {
+                val failure =
+                    shouldThrow<IllegalStateException> {
+                        transactions.execute { service.charge(reservationId) }
+                    }
+                failure.message.shouldNotBeNull().shouldContain("must not run inside an outer transaction")
+                gateway.chargeCount shouldBe 0
             }
-
-        assertTrue(assertNotNull(failure.message).contains("must not run inside an outer transaction"))
-        assertEquals(0, gateway.chargeCount)
+        }
     }
-
-    private fun prepareReservation(): String =
-        prepareService.execute(
-            CreateDirectReservationCommand(
-                propertyId = "property-1",
-                roomTypeOrUnitId = "deluxe",
-                checkIn = LocalDate.of(2026, 10, 1),
-                checkOut = LocalDate.of(2026, 10, 3),
-                amountWon = 120_000L,
-                mode = SellMode.HOTEL_POOL,
-            ),
-        ).reservationId
-
-    private fun succeeded() =
-        ChargeResult.Succeeded(pgPaymentId = "pg_test_1", pgEventId = "evt_test_1")
-}
+})

@@ -1,0 +1,14 @@
+# Enable with: --spring.profiles.active=redis
+# Requires: docker compose -f docker-compose.redis.yml up -d
+
+handys:
+  inventory:
+    redis:
+      enabled: true
+
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 1

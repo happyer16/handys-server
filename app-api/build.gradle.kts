@@ -20,5 +20,5 @@ dependencies {
     runtimeOnly("com.h2database:h2")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
-    testImplementation(libs.kotest.extensions.spring)
+    testImplementation("io.kotest.extensions:kotest-extensions-spring:1.3.0")
 }
