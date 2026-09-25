@@ -47,10 +47,13 @@ charge(reservation_id):
   rec = SELECT * FROM idempotency_record WHERE key = :key FOR UPDATE   # 행 잠금
   if rec.status is terminal:
       return rec.response_json          # 재청구 금지 · 동일 응답 재사용
-  rec.status = IN_FLIGHT                # 커밋 → 경계 밖 재진입 차단
+  if rec.status is IN_FLIGHT:
+      return in-progress                # PG 재호출 금지 · 진행 중 응답
+  rec.status = IN_FLIGHT                # 첫 진입(획득)만 설정 → 커밋 후 재진입은 위 분기
+  Intent RequiresAction → Processing    # charge 시작 (PRD §4 상태 전이)
   # --- TX 커밋 ---
 
-  result = PaymentGateway.charge(...)   # Non-TX
+  result = PaymentGateway.charge(...)   # Non-TX — IN_FLIGHT 획득자만 도달
 
   # --- TX-Finalize ---
   Intent → Succeeded; reservation → CONFIRMED; InventoryApi.confirmHold
