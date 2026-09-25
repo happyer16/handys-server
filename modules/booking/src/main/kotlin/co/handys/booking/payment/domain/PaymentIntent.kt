@@ -11,15 +11,22 @@ data class PaymentIntent(
     val expiresAt: Instant,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val pgPaymentId: String? = null,
 ) {
     fun markProcessing(at: Instant): PaymentIntent {
         requireTransition(from = PaymentIntentStatus.RequiresAction, to = PaymentIntentStatus.Processing, at = at)
         return copy(status = PaymentIntentStatus.Processing, updatedAt = at)
     }
 
-    fun markSucceeded(at: Instant): PaymentIntent {
+    fun markSucceeded(at: Instant, pgPaymentId: String? = null): PaymentIntent {
         requireTransition(from = PaymentIntentStatus.Processing, to = PaymentIntentStatus.Succeeded, at = at)
-        return copy(status = PaymentIntentStatus.Succeeded, updatedAt = at)
+        return copy(status = PaymentIntentStatus.Succeeded, updatedAt = at, pgPaymentId = pgPaymentId)
+    }
+
+    /** Declined charge: the intent goes back to awaiting a payment attempt, it is not terminal. */
+    fun markRequiresAction(at: Instant): PaymentIntent {
+        requireTransition(from = PaymentIntentStatus.Processing, to = PaymentIntentStatus.RequiresAction, at = at)
+        return copy(status = PaymentIntentStatus.RequiresAction, updatedAt = at)
     }
 
     fun markCancelled(at: Instant): PaymentIntent {

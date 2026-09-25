@@ -37,6 +37,8 @@ class InMemoryInventoryService : InventoryApi {
         slotToHoldId.remove(inventorySlot(record.cmd), holdId)
     }
 
+    fun isConfirmed(holdId: String): Boolean = holds[holdId]?.status == HoldStatus.CONFIRMED
+
     private fun inventorySlot(cmd: HoldCommand): String =
         "${cmd.propertyId}:${cmd.roomTypeOrUnitId}:${cmd.checkIn}:${cmd.checkOut}:${cmd.mode}"
 
