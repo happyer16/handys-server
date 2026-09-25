@@ -15,6 +15,7 @@ AI로 쓸 때: [`prd-harness`](../skills/prd-harness/SKILL.md) · [`adr-harness`
 | [일하는 방식](./working-style.md) | wrapup은 매번 X → 모아서 나중에 회고 |
 | [제품 컨텍스트](./product-context.md) | 핸디즈 사업부문·PLOTT 브랜드·Plott OS·과제 평가 관점 ([handys.co.kr](https://handys.co.kr/)) |
 | [문제 후보 10개](./problem-candidates.md) | 게스트/운영 여정 + 과제용 PON |
+| [TODO 행사·대형 예약 대기열](./todo-event-admission-queue.md) | Redis ZSET 진입 + 티켓/held TTL 회수 (스콥 아웃) |
 
 ### Decisions (ADR)
 

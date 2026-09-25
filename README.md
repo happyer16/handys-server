@@ -155,8 +155,9 @@ Cursor는 `.cursor/skills/` 심볼릭 링크로 위 스킬을 로드한다.
 **제품 (스콥 아웃 / TODO)** — [CMS·체크인 정책 §10](./wiki/prd/cms-checkin-core/policy.md#10-후순위-todo-명시)
 
 - TODO-PRICE 스마트 프라이싱 · TODO-PARK 주차·부가결제
-- 실 OTA / 실 도어락 · 채널 환불 전면 통일 · MLOps·오너스 풀스택
+- 실 PG · 실 OTA · 채널 환불 전면 통일 · MLOps·오너스 풀스택
 - **CS MCP 툴킷** (예약·Intent·불일치 큐·정산 라인 조회 / 가드레일 안 액션)
+- **행사·대형 예약 대기열** — Redis ZSET 진입 + 티켓/held TTL ([wiki](./wiki/todo-event-admission-queue.md))
 
 **도메인 미결**
 
@@ -181,6 +182,19 @@ PG·알림·채널 같은 **외부 호출은 DB TX와 한 원자 단위가 될 �
 | **알림** | 예약 확정·결제 성공·입실 안내 등 **알림 발송도 outbox → (Kafka) → 알림 워커**로만. 이번 스콥 구현 없음 — TODO |
 | **Kafka (또는 동급)** | outbox → 토픽 → `channel` / `checkin` / 정산 consume. 모듈 간 직접 호출 대신 이벤트 연결 ([ADR-002](./wiki/decisions/002-module-boundaries.md)) |
 | **당장 하지 않는 것** | 예약 생성 전체를 사가로 쪼개기 — 재고·Intent 불변식은 동기 TX, **외부 호출·알림·채널 부수효과만** outbox |
+
+**행사·대형 예약 (TODO, 별도 구현)** — 상세: [`wiki/todo-event-admission-queue.md`](./wiki/todo-event-admission-queue.md)
+
+오픈런·프로모처럼 요청이 몰리면 오버북/멱등만으로는 held·API가 같이 터진다. **재고·결제는 기존 ADR 유지**, 앞단에만 대기열을 둔다.
+
+| 층 | 기술 | 처리 |
+|----|------|------|
+| 진입 | **Redis Sorted Set** `evt:queue:{eventId}` | `ZADD` 줄서기 → 초당 `admit`만 입장 → `ZREM` |
+| 입장 증명 | Redis ticket `SET` + **짧은 TTL** (1~3분) | 티켓 없으면 Prepare 거부 |
+| 예약·결제 | 기존 Prepare / Intent **15분** + ADR-003 | 티켓 OK 후에만 hold |
+| 회수 | ZSET score 청소 + held/Intent expire 배치 | 줄·티켓·미결제 재고 반환 |
+
+한 줄: **ZSET으로 줄 → 짧은 티켓으로만 Prepare → held TTL로 방 회수.** ZSET OK ≠ 판매 확정.
 
 ---
 
