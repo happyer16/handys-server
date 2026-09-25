@@ -1,4 +1,4 @@
-package co.handys.booking.payment.infrastructure
+package co.handys.booking.payment.fake
 
 import co.handys.booking.payment.application.OtaPayout
 import co.handys.booking.payment.application.OtaPayoutRepository
@@ -7,7 +7,7 @@ import co.handys.booking.payment.application.SettlementRunRepository
 import java.time.YearMonth
 import java.util.concurrent.ConcurrentHashMap
 
-class InMemoryOtaPayoutRepository : OtaPayoutRepository {
+class FakeOtaPayoutRepository : OtaPayoutRepository {
     private val byKey = ConcurrentHashMap<String, OtaPayout>()
 
     override fun save(payout: OtaPayout): OtaPayout {
@@ -26,7 +26,7 @@ class InMemoryOtaPayoutRepository : OtaPayoutRepository {
     }
 }
 
-class InMemorySettlementRunRepository : SettlementRunRepository {
+class FakeSettlementRunRepository : SettlementRunRepository {
     private val byKey = ConcurrentHashMap<String, SettlementRun>()
 
     override fun save(run: SettlementRun): SettlementRun {

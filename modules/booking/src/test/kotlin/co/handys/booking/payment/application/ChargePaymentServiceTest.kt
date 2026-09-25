@@ -3,13 +3,13 @@ package co.handys.booking.payment.application
 import co.handys.booking.domain.ReservationStatus
 import co.handys.booking.payment.domain.IdempotencyKeys
 import co.handys.booking.payment.domain.PaymentIntentStatus
-import co.handys.booking.payment.infrastructure.InMemoryIdempotencyStore
-import co.handys.booking.payment.infrastructure.InMemoryPaymentIntentRepository
-import co.handys.booking.payment.infrastructure.InMemoryReservationRepository
+import co.handys.booking.payment.fake.FakeIdempotencyStore
+import co.handys.booking.payment.fake.FakePaymentIntentRepository
+import co.handys.booking.payment.fake.FakeReservationRepository
 import co.handys.booking.payment.support.NoOpTransactionManager
 import co.handys.booking.payment.support.TransactionAssertingGateway
 import co.handys.common.domain.SellMode
-import co.handys.inventory.application.InMemoryInventoryService
+import co.handys.booking.payment.fake.FakeInventoryService
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
@@ -37,10 +37,10 @@ class ChargePaymentServiceTest {
             override fun instant(): Instant = now
         }
 
-    private val inventory = InMemoryInventoryService()
-    private val reservations = InMemoryReservationRepository()
-    private val paymentIntents = InMemoryPaymentIntentRepository()
-    private val idempotency = InMemoryIdempotencyStore()
+    private val inventory = co.handys.booking.payment.fake.FakeInventoryService()
+    private val reservations = FakeReservationRepository()
+    private val paymentIntents = FakePaymentIntentRepository()
+    private val idempotency = FakeIdempotencyStore()
     private val transactions = TransactionTemplate(NoOpTransactionManager())
 
     private var gatewayBehaviour: (ChargeRequest) -> ChargeResult = { succeeded() }

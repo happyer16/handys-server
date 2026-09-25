@@ -2,7 +2,7 @@ package co.handys.inventory
 
 import co.handys.common.domain.SellMode
 import co.handys.inventory.api.HoldCommand
-import co.handys.inventory.application.InMemoryInventoryService
+import co.handys.inventory.fake.FakeInventoryService
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -12,7 +12,7 @@ import java.time.LocalDate
 class InventoryHoldTest {
     @Test
     fun `confirmHold is idempotent`() {
-        val api = InMemoryInventoryService()
+        val api = FakeInventoryService()
         val hold = api.hold(sampleHold())
         api.confirmHold(hold.holdId)
         api.confirmHold(hold.holdId)
@@ -20,7 +20,7 @@ class InventoryHoldTest {
 
     @Test
     fun `confirmHold on unknown holdId throws`() {
-        val api = InMemoryInventoryService()
+        val api = FakeInventoryService()
         assertFailsWith<IllegalArgumentException> {
             api.confirmHold("missing")
         }
@@ -28,7 +28,7 @@ class InventoryHoldTest {
 
     @Test
     fun `confirmHold after release throws`() {
-        val api = InMemoryInventoryService()
+        val api = FakeInventoryService()
         val hold = api.hold(sampleHold())
         api.releaseHold(hold.holdId)
         assertFailsWith<IllegalStateException> {
@@ -38,7 +38,7 @@ class InventoryHoldTest {
 
     @Test
     fun `hold returns holdId and expiresAt from command`() {
-        val api = InMemoryInventoryService()
+        val api = FakeInventoryService()
         val expiresAt = Instant.parse("2026-09-25T12:15:00Z")
         val hold = api.hold(sampleHold(expiresAt = expiresAt))
         assertEquals(expiresAt, hold.expiresAt)

@@ -1,4 +1,4 @@
-package co.handys.checkin.application
+package co.handys.checkin.infrastructure
 
 import co.handys.booking.api.BookingApi
 import co.handys.checkin.api.CheckinApi
@@ -8,38 +8,49 @@ import co.handys.checkin.domain.ReadinessEvaluator
 import co.handys.common.domain.ReasonCode
 import co.handys.common.domain.SellMode
 import co.handys.property.api.PropertyApi
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.Id
+import jakarta.persistence.Table
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDate
-import java.util.concurrent.ConcurrentHashMap
 
-class InMemoryCheckinService(
+@Entity
+@Table(name = "checkin_key")
+class KeyIssuedEntity(
+    @Id @Column(name = "reservation_id", length = 64) var reservationId: String = "",
+    @Column(name = "key_code", nullable = false, length = 128) var keyCode: String = "",
+)
+
+interface KeyIssuedJpaRepository : JpaRepository<KeyIssuedEntity, String>
+
+@Service
+class JpaCheckinApi(
     private val bookingApi: BookingApi,
     private val propertyApi: PropertyApi,
+    private val keys: KeyIssuedJpaRepository,
 ) : CheckinApi {
-    private val keys = ConcurrentHashMap<String, String>()
-
+    @Transactional(readOnly = true)
     override fun getReadiness(reservationId: String, today: LocalDate): ReadinessView? {
         val reservation = bookingApi.getStay(reservationId) ?: return null
         val room = propertyApi.getRoomType(reservation.roomTypeId) ?: return null
         val unit = reservation.unitId?.let { propertyApi.getUnit(it) }
         val readyCount = propertyApi.listUnitsByRoomType(reservation.roomTypeId)
             .count { it.hkStatus == "Ready" && !it.occupied }
-        val eval = ReadinessEvaluator.evaluate(
-            reservation = reservation,
-            mode = room.mode,
-            assignedUnit = unit,
-            readyPoolCount = readyCount,
-            today = today,
-        )
+        val eval = ReadinessEvaluator.evaluate(reservation, room.mode, unit, readyCount, today)
         return ReadinessView(
             reservationId = reservation.id,
             flags = eval.flags,
             allGo = eval.allGo,
             firstBlocker = if (!eval.checkinEligible) "checkin_eligible" else eval.firstBlocker,
             checkinEligible = eval.checkinEligible,
-            keyIssued = keys.containsKey(reservationId),
+            keyIssued = keys.existsById(reservationId),
         )
     }
 
+    @Transactional
     override fun assignHotelUnit(reservationId: String, today: LocalDate): ReadinessView? {
         val reservation = bookingApi.getStay(reservationId) ?: return null
         if (reservation.unitId != null) return getReadiness(reservationId, today)
@@ -53,6 +64,7 @@ class InMemoryCheckinService(
         return getReadiness(reservationId, today)
     }
 
+    @Transactional
     override fun issueKey(reservationId: String, today: LocalDate): KeyResult {
         val readiness = getReadiness(reservationId, today)
             ?: return KeyResult.Blocked(ReasonCode.NOT_FOUND, null)
@@ -62,7 +74,10 @@ class InMemoryCheckinService(
         if (!readiness.allGo) {
             return KeyResult.Blocked(ReasonCode.READINESS_NOT_MET, readiness.firstBlocker)
         }
-        val code = keys.getOrPut(reservationId) { "KEY-$reservationId" }
+        val existing = keys.findById(reservationId)
+        if (existing.isPresent) return KeyResult.Issued(existing.get().keyCode)
+        val code = "KEY-$reservationId"
+        keys.save(KeyIssuedEntity(reservationId, code))
         return KeyResult.Issued(code)
     }
 }

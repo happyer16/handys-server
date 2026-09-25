@@ -9,4 +9,6 @@ interface ReservationRepository {
     fun findById(id: String): Reservation?
 
     fun findByStatus(status: ReservationStatus): List<Reservation>
+
+    fun findDistinctPropertyIds(): Set<String>
 }

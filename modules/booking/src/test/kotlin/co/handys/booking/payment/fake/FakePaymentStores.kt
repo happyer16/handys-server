@@ -1,4 +1,4 @@
-package co.handys.booking.payment.infrastructure
+package co.handys.booking.payment.fake
 
 import co.handys.booking.payment.application.BeginResult
 import co.handys.booking.payment.application.IdempotencyEntry
@@ -7,7 +7,7 @@ import co.handys.booking.payment.application.PaymentIntentRepository
 import co.handys.booking.payment.domain.PaymentIntent
 import java.util.concurrent.ConcurrentHashMap
 
-class InMemoryIdempotencyStore : IdempotencyStore {
+class FakeIdempotencyStore : IdempotencyStore {
     private val entries = ConcurrentHashMap<String, IdempotencyEntry>()
 
     override fun begin(key: String): BeginResult {
@@ -36,7 +36,7 @@ class InMemoryIdempotencyStore : IdempotencyStore {
         IdempotencyEntry(key = key, payload = null, terminal = false, inFlight = true)
 }
 
-class InMemoryPaymentIntentRepository : PaymentIntentRepository {
+class FakePaymentIntentRepository : PaymentIntentRepository {
     private val byId = ConcurrentHashMap<String, PaymentIntent>()
     private val idByIdempotencyKey = ConcurrentHashMap<String, String>()
 

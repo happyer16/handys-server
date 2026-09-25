@@ -9,5 +9,6 @@ dependencies {
     implementation(project(":module-inventory"))
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework:spring-tx")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
 }

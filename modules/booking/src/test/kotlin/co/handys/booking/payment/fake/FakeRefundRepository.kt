@@ -1,10 +1,10 @@
-package co.handys.booking.payment.infrastructure
+package co.handys.booking.payment.fake
 
 import co.handys.booking.payment.application.RefundRecord
 import co.handys.booking.payment.application.RefundRepository
 import java.util.concurrent.ConcurrentHashMap
 
-class InMemoryRefundRepository : RefundRepository {
+class FakeRefundRepository : RefundRepository {
     private val byReservation = ConcurrentHashMap<String, RefundRecord>()
 
     override fun save(record: RefundRecord): RefundRecord {

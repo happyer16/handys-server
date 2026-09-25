@@ -13,6 +13,7 @@ rootProject.name = "handys"
 
 include(
     "app-api",
+    "app-batch",
     "module-common",
     "module-property",
     "module-inventory",

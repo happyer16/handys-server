@@ -1,11 +1,11 @@
 server:
-  port: 8080
+  port: 8081
 
 spring:
   application:
-    name: handys
+    name: handys-batch
   datasource:
-    url: jdbc:h2:mem:handys;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    url: jdbc:h2:mem:handys-batch;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -17,14 +17,6 @@ spring:
     console:
       enabled: true
       path: /h2-console
-
-springdoc:
-  api-docs:
-    path: /v3/api-docs
-  swagger-ui:
-    path: /swagger-ui.html
-    tags-sorter: alpha
-    operations-sorter: method
 
 management:
   endpoints:

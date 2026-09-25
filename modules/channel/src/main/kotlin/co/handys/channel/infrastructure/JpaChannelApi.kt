@@ -1,4 +1,4 @@
-package co.handys.channel.application
+package co.handys.channel.infrastructure
 
 import co.handys.booking.api.BookingApi
 import co.handys.booking.api.CreateHotelStayCommand
@@ -11,43 +11,49 @@ import co.handys.inventory.api.DayQuote
 import co.handys.inventory.api.DayQuoteQuery
 import co.handys.inventory.api.InventoryApi
 import co.handys.property.api.PropertyApi
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.Id
+import jakarta.persistence.Table
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
-import java.util.concurrent.ConcurrentHashMap
 
-class InMemoryChannelService(
+@Entity
+@Table(name = "channel_sync")
+class ChannelSyncEntity(
+    @Id @Column(name = "channel_id", length = 64) var channelId: String = "",
+    @Column(name = "last_sync_at", nullable = false) var lastSyncAt: Instant = Instant.EPOCH,
+)
+
+interface ChannelSyncJpaRepository : JpaRepository<ChannelSyncEntity, String>
+
+@Service
+class JpaChannelApi(
     private val inventoryApi: InventoryApi,
     private val bookingApi: BookingApi,
     private val propertyApi: PropertyApi,
-    private val clock: () -> Instant = { Instant.now() },
+    private val syncRepo: ChannelSyncJpaRepository,
+    private val clock: Clock,
 ) : ChannelApi {
-    private val lastSync = ConcurrentHashMap<String, Instant>()
-
-    fun seedSynced(channelId: String, at: Instant = clock()) {
-        lastSync[channelId] = at
-    }
-
+    @Transactional(readOnly = true)
     override fun quote(channelId: String, request: ChannelQuoteRequest, today: LocalDate): DayQuote? {
         val room = propertyApi.getRoomType(request.roomTypeId) ?: return null
         val property = propertyApi.getProperty(request.propertyId) ?: return null
         return inventoryApi.quoteDay(
             DayQuoteQuery(
-                propertyId = request.propertyId,
-                roomTypeId = request.roomTypeId,
-                date = request.date,
-                mode = room.mode,
-                capacity = room.capacity,
-                minLeadDays = room.minLeadDays,
-                minCapacityForOverbook = room.minCapacityForOverbook,
-                overbookRate = room.overbookRate,
-                today = today,
-                listPricePresent = room.listPrice != null,
-                inventorySyncFresh = isFresh(channelId, property.staleTtlSec),
+                request.propertyId, request.roomTypeId, request.date, room.mode, room.capacity,
+                room.minLeadDays, room.minCapacityForOverbook, room.overbookRate, today,
+                room.listPrice != null, isFresh(channelId, property.staleTtlSec),
             ),
         )
     }
 
+    @Transactional
     override fun bookHotel(
         channelId: String,
         propertyId: String,
@@ -64,16 +70,9 @@ class InMemoryChannelService(
         return when (
             val result = bookingApi.createHotelStay(
                 CreateHotelStayCommand(
-                    propertyId = propertyId,
-                    roomTypeId = roomTypeId,
-                    channelId = channelId,
-                    checkIn = checkIn,
-                    checkOut = checkOut,
-                    guestName = guestName,
-                    guestPhone = guestPhone,
-                    guestEmail = guestEmail,
-                    inventorySyncFresh = isFresh(channelId, property.staleTtlSec),
-                    today = today,
+                    propertyId, roomTypeId, channelId, checkIn, checkOut,
+                    guestName, guestPhone, guestEmail,
+                    isFresh(channelId, property.staleTtlSec), today,
                 ),
             )
         ) {
@@ -82,12 +81,15 @@ class InMemoryChannelService(
         }
     }
 
+    @Transactional
     override fun markSynced(channelId: String) {
-        lastSync[channelId] = clock()
+        val row = syncRepo.findById(channelId).orElse(ChannelSyncEntity(channelId))
+        row.lastSyncAt = clock.instant()
+        syncRepo.save(row)
     }
 
     private fun isFresh(channelId: String, staleTtlSec: Int): Boolean {
-        val at = lastSync[channelId] ?: return false
-        return Duration.between(at, clock()).seconds <= staleTtlSec
+        val at = syncRepo.findById(channelId).map { it.lastSyncAt }.orElse(null) ?: return false
+        return Duration.between(at, clock.instant()).seconds <= staleTtlSec
     }
 }

@@ -1,15 +1,15 @@
 package co.handys.booking.payment.application
 
-import co.handys.booking.payment.infrastructure.InMemoryIdempotencyStore
-import co.handys.booking.payment.infrastructure.InMemoryOtaPayoutRepository
-import co.handys.booking.payment.infrastructure.InMemoryPaymentIntentRepository
-import co.handys.booking.payment.infrastructure.InMemoryRefundRepository
-import co.handys.booking.payment.infrastructure.InMemoryReservationRepository
-import co.handys.booking.payment.infrastructure.InMemorySettlementRunRepository
+import co.handys.booking.payment.fake.FakeIdempotencyStore
+import co.handys.booking.payment.fake.FakeOtaPayoutRepository
+import co.handys.booking.payment.fake.FakePaymentIntentRepository
+import co.handys.booking.payment.fake.FakeRefundRepository
+import co.handys.booking.payment.fake.FakeReservationRepository
+import co.handys.booking.payment.fake.FakeSettlementRunRepository
 import co.handys.booking.payment.support.NoOpTransactionManager
 import co.handys.booking.payment.support.TransactionAssertingGateway
 import co.handys.common.domain.SellMode
-import co.handys.inventory.application.InMemoryInventoryService
+import co.handys.booking.payment.fake.FakeInventoryService
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.Instant
@@ -34,13 +34,13 @@ class OwnerSettlementServiceTest {
             override fun instant(): Instant = now
         }
 
-    private val inventory = InMemoryInventoryService()
-    private val reservations = InMemoryReservationRepository()
-    private val paymentIntents = InMemoryPaymentIntentRepository()
-    private val refunds = InMemoryRefundRepository()
-    private val payouts = InMemoryOtaPayoutRepository()
-    private val runs = InMemorySettlementRunRepository()
-    private val idempotency = InMemoryIdempotencyStore()
+    private val inventory = co.handys.booking.payment.fake.FakeInventoryService()
+    private val reservations = FakeReservationRepository()
+    private val paymentIntents = FakePaymentIntentRepository()
+    private val refunds = FakeRefundRepository()
+    private val payouts = FakeOtaPayoutRepository()
+    private val runs = FakeSettlementRunRepository()
+    private val idempotency = FakeIdempotencyStore()
     private val transactions = TransactionTemplate(NoOpTransactionManager())
     private val gateway =
         TransactionAssertingGateway(behaviour = {

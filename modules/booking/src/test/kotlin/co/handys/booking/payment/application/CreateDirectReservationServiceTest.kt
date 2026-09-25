@@ -4,10 +4,10 @@ import co.handys.booking.domain.PaymentSource
 import co.handys.booking.domain.ReservationStatus
 import co.handys.booking.payment.domain.IdempotencyKeys
 import co.handys.booking.payment.domain.PaymentIntentStatus
-import co.handys.booking.payment.infrastructure.InMemoryPaymentIntentRepository
-import co.handys.booking.payment.infrastructure.InMemoryReservationRepository
+import co.handys.booking.payment.fake.FakePaymentIntentRepository
+import co.handys.booking.payment.fake.FakeReservationRepository
 import co.handys.common.domain.SellMode
-import co.handys.inventory.application.InMemoryInventoryService
+import co.handys.booking.payment.fake.FakeInventoryService
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
@@ -23,12 +23,12 @@ import kotlin.test.assertTrue
 
 class CreateDirectReservationServiceTest {
     private val now = Instant.parse("2026-09-25T12:00:00Z")
-    private val reservations = InMemoryReservationRepository()
-    private val paymentIntents = InMemoryPaymentIntentRepository()
+    private val reservations = FakeReservationRepository()
+    private val paymentIntents = FakePaymentIntentRepository()
     private val gateway = mock<PaymentGateway>()
     private val service =
         CreateDirectReservationService(
-            inventory = InMemoryInventoryService(),
+            inventory = co.handys.booking.payment.fake.FakeInventoryService(),
             reservations = reservations,
             paymentIntents = paymentIntents,
             paymentGateway = gateway,

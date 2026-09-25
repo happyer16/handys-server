@@ -7,24 +7,28 @@ Plott OS 과제 — CMS·재고·체크인 코어. 결정·기획은 `wiki/`, AI
 근거: [ADR-002](./wiki/decisions/002-module-boundaries.md)
 
 ```
-app-api                  # Spring Boot 진입점 (REST·설정)
+app-api                  # Spring Boot REST 진입점
+app-batch                # 배치 전용 진입점 (스케줄러만 — 정산 등)
 modules/
   common                 # 공유 커널 (도메인 로직 금지)
   property               # 지점·룸타입·유닛·판매모드
   inventory              # 가용·오버북 게이트 (ADR-001)
-  booking                # 예약 · 특정방 즉시 배정
+  booking                # 예약 · 결제 · 오너 정산 유스케이스
   checkin                # readiness · 호텔형 입실 배정
   channel                # OTA/다이렉트 어댑터 (얇게)
 ```
 
 의존 방향 (역방향 금지):
 
-`property ← inventory ← booking ← checkin` · `channel → inventory` · `* → common` · `app-api → 전부`
+`property ← inventory ← booking ← checkin` · `channel → inventory` · `* → common` · `app-api` / `app-batch` → 도메인 모듈
 
 ```bash
-./gradlew :app-api:bootRun    # http://localhost:8080/health
+./gradlew :app-api:bootRun      # http://localhost:8080/health
+./gradlew :app-batch:bootRun    # http://localhost:8081/actuator/health — 정산 배치만
 ./gradlew :app-api:bootJar
 ```
+
+정산 배치는 **app-batch에서만** 스케줄되며 (`UNIQUE(job_date)`로 동일 날짜 중복 실행 방지). app-api에는 스케줄러가 없다.
 
 ## AI 활용 · 검토
 
@@ -59,7 +63,7 @@ Cursor는 `.cursor/skills/` 심볼릭 링크로 위 스킬을 로드한다.
 
 | 경로 | 역할 |
 |------|------|
-| `app-api/` · `modules/` | Spring Boot 멀티 모듈 (ADR-002) |
+| `app-api/` · `app-batch/` · `modules/` | Spring Boot 멀티 모듈 (ADR-002 + 배치 진입점) |
 | `wiki/` | 사람이 읽는 산출물 |
 | `skills/` | AI 스킬 (과제에서 활용·검토 과정이 보이게) |
 | `.cursor/skills/` | Cursor 로드용 링크 |

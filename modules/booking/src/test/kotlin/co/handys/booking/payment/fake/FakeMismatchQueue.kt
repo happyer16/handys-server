@@ -1,4 +1,4 @@
-package co.handys.booking.payment.infrastructure
+package co.handys.booking.payment.fake
 
 import co.handys.booking.payment.application.MismatchQueue
 import co.handys.booking.payment.application.PgEventDedupStore
@@ -6,7 +6,7 @@ import co.handys.booking.payment.domain.PaymentMismatch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
-class InMemoryMismatchQueue : MismatchQueue {
+class FakeMismatchQueue : MismatchQueue {
     private val items = CopyOnWriteArrayList<PaymentMismatch>()
 
     override fun enqueue(mismatch: PaymentMismatch) {
@@ -18,7 +18,7 @@ class InMemoryMismatchQueue : MismatchQueue {
     override fun all(): List<PaymentMismatch> = items.toList()
 }
 
-class InMemoryPgEventDedupStore : PgEventDedupStore {
+class FakePgEventDedupStore : PgEventDedupStore {
     private val seen = ConcurrentHashMap.newKeySet<String>()
 
     override fun tryRecord(pgEventId: String): Boolean = seen.add(pgEventId)
