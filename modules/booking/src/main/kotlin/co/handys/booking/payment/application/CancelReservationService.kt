@@ -4,7 +4,7 @@ import co.handys.booking.domain.Reservation
 import co.handys.booking.domain.ReservationStatus
 import co.handys.booking.payment.domain.IdempotencyKeys
 import co.handys.booking.payment.domain.PaymentIntentStatus
-import co.handys.inventory.api.InventoryApi
+import co.handys.inventory.api.InventoryHoldApi
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
@@ -19,12 +19,12 @@ import java.util.UUID
  */
 class CancelReservationService(
     private val transactions: TransactionTemplate,
-    private val gateway: PaymentGateway,
+    private val gateway: RefundGateway,
     private val reservations: ReservationRepository,
     private val paymentIntents: PaymentIntentRepository,
     private val refunds: RefundRepository,
     private val idempotency: IdempotencyStore,
-    private val inventory: InventoryApi,
+    private val inventory: InventoryHoldApi,
     private val clock: Clock,
 ) {
     fun cancel(reservationId: String): CancelReservationResult {

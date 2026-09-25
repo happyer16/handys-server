@@ -3,7 +3,7 @@ package co.handys.booking.payment.application
 import co.handys.booking.domain.ReservationStatus
 import co.handys.booking.payment.domain.IdempotencyKeys
 import co.handys.booking.payment.domain.PaymentIntentStatus
-import co.handys.inventory.api.InventoryApi
+import co.handys.inventory.api.InventoryHoldApi
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 
@@ -12,7 +12,7 @@ class ExpirePaymentIntentsService(
     private val transactions: TransactionTemplate,
     private val reservations: ReservationRepository,
     private val paymentIntents: PaymentIntentRepository,
-    private val inventory: InventoryApi,
+    private val inventory: InventoryHoldApi,
     private val clock: Clock,
 ) {
     fun runOnce() {

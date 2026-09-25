@@ -27,6 +27,8 @@ subprojects {
         "implementation"("org.jetbrains.kotlin:kotlin-reflect")
         "implementation"("org.jetbrains.kotlin:kotlin-stdlib")
         "testImplementation"("org.jetbrains.kotlin:kotlin-test-junit5")
+        "testImplementation"(libs.kotest.runner.junit5)
+        "testImplementation"(libs.kotest.assertions.core)
         "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
     }
 

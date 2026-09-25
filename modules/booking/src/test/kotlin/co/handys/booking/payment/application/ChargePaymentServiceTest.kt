@@ -62,7 +62,6 @@ class ChargePaymentServiceTest {
             inventory = inventory,
             reservations = reservations,
             paymentIntents = paymentIntents,
-            paymentGateway = gateway,
             clock = clock,
         )
 

@@ -5,7 +5,7 @@ import co.handys.booking.domain.ReservationStatus
 import co.handys.booking.payment.domain.IdempotencyKeys
 import co.handys.booking.payment.domain.PaymentIntent
 import co.handys.booking.payment.domain.PaymentIntentStatus
-import co.handys.inventory.api.InventoryApi
+import co.handys.inventory.api.InventoryHoldApi
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
@@ -21,11 +21,11 @@ import java.time.Instant
  */
 class ChargePaymentService(
     private val transactions: TransactionTemplate,
-    private val gateway: PaymentGateway,
+    private val gateway: ChargeGateway,
     private val reservations: ReservationRepository,
     private val paymentIntents: PaymentIntentRepository,
     private val idempotency: IdempotencyStore,
-    private val inventory: InventoryApi,
+    private val inventory: InventoryHoldApi,
     private val clock: Clock,
 ) {
     fun charge(reservationId: String): ChargePaymentResult {

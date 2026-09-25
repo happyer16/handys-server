@@ -7,7 +7,7 @@ import co.handys.booking.payment.domain.PaymentIntent
 import co.handys.booking.payment.domain.PaymentIntentStatus
 import co.handys.booking.payment.domain.PaymentMismatch
 import co.handys.booking.payment.domain.PaymentMismatchReason
-import co.handys.inventory.api.InventoryApi
+import co.handys.inventory.api.InventoryHoldApi
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.Instant
@@ -21,7 +21,7 @@ class HandlePgWebhookService(
     private val reservations: ReservationRepository,
     private val paymentIntents: PaymentIntentRepository,
     private val idempotency: IdempotencyStore,
-    private val inventory: InventoryApi,
+    private val inventory: InventoryHoldApi,
     private val mismatches: MismatchQueue,
     private val pgEvents: PgEventDedupStore,
     private val clock: Clock,

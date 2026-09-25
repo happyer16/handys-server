@@ -75,7 +75,6 @@ class OwnerSettlementBatchServiceTest {
             inventory = inventory,
             reservations = reservations,
             paymentIntents = paymentIntents,
-            paymentGateway = gateway,
             clock = clock,
         )
     private val charge =

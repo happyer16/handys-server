@@ -1,10 +1,17 @@
 package co.handys.booking.payment.application
 
-interface PaymentGateway {
+/** Charge-only port — cancel/refund callers must not depend on this (ISP). */
+interface ChargeGateway {
     fun charge(request: ChargeRequest): ChargeResult
+}
 
+/** Refund-only port — charge callers must not depend on this (ISP). */
+interface RefundGateway {
     fun refund(request: RefundRequest): RefundResult
 }
+
+/** Combined PG adapter for wiring / mocks that implement both operations. */
+interface PaymentGateway : ChargeGateway, RefundGateway
 
 data class ChargeRequest(
     val idempotencyKey: String,

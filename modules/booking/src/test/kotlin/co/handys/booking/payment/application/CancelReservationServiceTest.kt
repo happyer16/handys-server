@@ -50,7 +50,6 @@ class CancelReservationServiceTest {
             inventory = inventory,
             reservations = reservations,
             paymentIntents = paymentIntents,
-            paymentGateway = gateway,
             clock = clock,
         )
 

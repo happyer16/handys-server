@@ -5,21 +5,35 @@ import co.handys.common.domain.SellMode
 import java.time.Instant
 import java.time.LocalDate
 
-/** Public facade — single source of truth for sellable inventory. */
-interface InventoryApi {
+/**
+ * Payment held lifecycle (prepare / confirm / release).
+ * Clients that only touch held inventory depend on this — not on quote or sold allocation (ISP).
+ */
+interface InventoryHoldApi {
     fun hold(cmd: HoldCommand): HoldResult
 
     fun confirmHold(holdId: String)
 
     fun releaseHold(holdId: String)
+}
 
-    /** PRD §4.1 day projection (OverbookGate). */
+/** Day-level availability projection (OverbookGate). */
+interface InventoryQuoteApi {
     fun quoteDay(query: DayQuoteQuery): DayQuote?
+}
 
+/** Hotel-pool confirmed sold nights (CMS / channel stay path). */
+interface InventorySoldApi {
     fun confirmHotelNights(cmd: ConfirmNightsCommand): ConfirmNightsResult
 
     fun releaseHotelNights(cmd: ReleaseNightsCommand)
 }
+
+/**
+ * Full inventory facade for wiring / tests that need every surface.
+ * Prefer the role interfaces ([InventoryHoldApi], [InventoryQuoteApi], [InventorySoldApi]) at call sites.
+ */
+interface InventoryApi : InventoryHoldApi, InventoryQuoteApi, InventorySoldApi
 
 data class HoldCommand(
     val propertyId: String,

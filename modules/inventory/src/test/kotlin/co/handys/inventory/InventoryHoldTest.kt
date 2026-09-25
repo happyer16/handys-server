@@ -3,54 +3,71 @@ package co.handys.inventory
 import co.handys.common.domain.SellMode
 import co.handys.inventory.api.HoldCommand
 import co.handys.inventory.fake.FakeInventoryService
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.core.spec.style.BehaviorSpec
+import io.kotest.matchers.shouldBe
 import java.time.Instant
 import java.time.LocalDate
 
-class InventoryHoldTest {
-    @Test
-    fun `confirmHold is idempotent`() {
+class InventoryHoldTest : BehaviorSpec({
+    Given("a confirmed hold") {
         val api = FakeInventoryService()
         val hold = api.hold(sampleHold())
         api.confirmHold(hold.holdId)
-        api.confirmHold(hold.holdId)
-    }
 
-    @Test
-    fun `confirmHold on unknown holdId throws`() {
-        val api = FakeInventoryService()
-        assertFailsWith<IllegalArgumentException> {
-            api.confirmHold("missing")
+        When("confirmHold is called again") {
+            Then("it is idempotent") {
+                api.confirmHold(hold.holdId)
+            }
         }
     }
 
-    @Test
-    fun `confirmHold after release throws`() {
+    Given("an unknown hold id") {
+        val api = FakeInventoryService()
+
+        When("confirmHold is called") {
+            Then("it throws IllegalArgumentException") {
+                shouldThrow<IllegalArgumentException> {
+                    api.confirmHold("missing")
+                }
+            }
+        }
+    }
+
+    Given("a released hold") {
         val api = FakeInventoryService()
         val hold = api.hold(sampleHold())
         api.releaseHold(hold.holdId)
-        assertFailsWith<IllegalStateException> {
-            api.confirmHold(hold.holdId)
+
+        When("confirmHold is called") {
+            Then("it throws IllegalStateException") {
+                shouldThrow<IllegalStateException> {
+                    api.confirmHold(hold.holdId)
+                }
+            }
         }
     }
 
-    @Test
-    fun `hold returns holdId and expiresAt from command`() {
+    Given("a hold command with an expiresAt") {
         val api = FakeInventoryService()
         val expiresAt = Instant.parse("2026-09-25T12:15:00Z")
-        val hold = api.hold(sampleHold(expiresAt = expiresAt))
-        assertEquals(expiresAt, hold.expiresAt)
-    }
 
-    private fun sampleHold(expiresAt: Instant = Instant.parse("2026-09-25T12:15:00Z")) =
-        HoldCommand(
-            propertyId = "p1",
-            roomTypeOrUnitId = "rt1",
-            checkIn = LocalDate.parse("2026-10-01"),
-            checkOut = LocalDate.parse("2026-10-03"),
-            mode = SellMode.HOTEL_POOL,
-            expiresAt = expiresAt,
-        )
-}
+        When("hold is created") {
+            val hold = api.hold(sampleHold(expiresAt = expiresAt))
+
+            Then("holdId and expiresAt come from the command") {
+                hold.expiresAt shouldBe expiresAt
+            }
+        }
+    }
+})
+
+private fun sampleHold(expiresAt: Instant = Instant.parse("2026-09-25T12:15:00Z")) =
+    HoldCommand(
+        propertyId = "p1",
+        roomTypeOrUnitId = "rt1",
+        checkIn = LocalDate.parse("2026-10-01"),
+        checkOut = LocalDate.parse("2026-10-03"),
+        mode = SellMode.HOTEL_POOL,
+        expiresAt = expiresAt,
+    )

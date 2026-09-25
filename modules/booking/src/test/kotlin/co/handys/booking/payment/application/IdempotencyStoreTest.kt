@@ -1,47 +1,60 @@
 package co.handys.booking.payment.application
 
 import co.handys.booking.payment.fake.FakeIdempotencyStore
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
+import io.kotest.core.spec.style.BehaviorSpec
+import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 
-class IdempotencyStoreTest {
-    @Test
-    fun `second begin returns first in-flight entry`() {
+class IdempotencyStoreTest : BehaviorSpec({
+    Given("an empty idempotency store") {
         val store = FakeIdempotencyStore()
-        val a = store.begin("pay:r1:CHARGE_FULL")
-        assertIs<BeginResult.Acquired>(a)
-        val b = store.begin("pay:r1:CHARGE_FULL")
-        val existing = assertIs<BeginResult.Existing>(b)
-        assertEquals("pay:r1:CHARGE_FULL", existing.entry.key)
-        assertNull(existing.entry.payload)
-        assertEquals(false, existing.entry.terminal)
-        assertTrue(existing.entry.inFlight)
+
+        When("begin is called twice for the same key") {
+            val a = store.begin("pay:r1:CHARGE_FULL")
+            val b = store.begin("pay:r1:CHARGE_FULL")
+
+            Then("the second begin returns the first in-flight entry") {
+                a.shouldBeInstanceOf<BeginResult.Acquired>()
+                val existing = b.shouldBeInstanceOf<BeginResult.Existing>()
+                existing.entry.key shouldBe "pay:r1:CHARGE_FULL"
+                existing.entry.payload.shouldBeNull()
+                existing.entry.terminal shouldBe false
+                existing.entry.inFlight shouldBe true
+            }
+        }
     }
 
-    @Test
-    fun `begin after terminal complete returns stored payload`() {
+    Given("a terminal completed key") {
         val store = FakeIdempotencyStore()
-        assertIs<BeginResult.Acquired>(store.begin("pay:r1:CHARGE_FULL"))
+        store.begin("pay:r1:CHARGE_FULL").shouldBeInstanceOf<BeginResult.Acquired>()
         store.complete("pay:r1:CHARGE_FULL", responsePayload = """{"pgPaymentId":"pg_1"}""", terminal = true)
 
-        val again = assertIs<BeginResult.Existing>(store.begin("pay:r1:CHARGE_FULL"))
-        assertTrue(again.entry.terminal)
-        assertEquals("""{"pgPaymentId":"pg_1"}""", again.entry.payload)
+        When("begin is called again") {
+            val again = store.begin("pay:r1:CHARGE_FULL").shouldBeInstanceOf<BeginResult.Existing>()
+
+            Then("the stored payload is returned") {
+                again.entry.terminal shouldBe true
+                again.entry.payload shouldBe """{"pgPaymentId":"pg_1"}"""
+            }
+        }
     }
 
-    @Test
-    fun `begin after non-terminal complete re-acquires the key`() {
+    Given("a non-terminal completed key") {
         val store = FakeIdempotencyStore()
-        assertIs<BeginResult.Acquired>(store.begin("pay:r1:CHARGE_FULL"))
+        store.begin("pay:r1:CHARGE_FULL").shouldBeInstanceOf<BeginResult.Acquired>()
         store.complete("pay:r1:CHARGE_FULL", responsePayload = """{"reason":"declined"}""", terminal = false)
 
-        assertIs<BeginResult.Acquired>(store.begin("pay:r1:CHARGE_FULL"))
-        // Re-acquired means in flight again, so a concurrent caller is held off.
-        val concurrent = assertIs<BeginResult.Existing>(store.begin("pay:r1:CHARGE_FULL"))
-        assertTrue(concurrent.entry.inFlight)
-        assertNull(concurrent.entry.payload)
+        When("begin is called again") {
+            val reacquired = store.begin("pay:r1:CHARGE_FULL")
+            val concurrent = store.begin("pay:r1:CHARGE_FULL")
+
+            Then("the key is re-acquired and concurrent callers are held off") {
+                reacquired.shouldBeInstanceOf<BeginResult.Acquired>()
+                val existing = concurrent.shouldBeInstanceOf<BeginResult.Existing>()
+                existing.entry.inFlight shouldBe true
+                existing.entry.payload.shouldBeNull()
+            }
+        }
     }
-}
+})

@@ -8,7 +8,7 @@ import co.handys.common.domain.ReasonCode
 import co.handys.common.domain.SellMode
 import co.handys.inventory.api.ConfirmNightsCommand
 import co.handys.inventory.api.ConfirmNightsResult
-import co.handys.inventory.api.InventoryApi
+import co.handys.inventory.api.InventorySoldApi
 import co.handys.property.api.PropertyApi
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
@@ -43,7 +43,7 @@ interface StayReservationJpaRepository : JpaRepository<StayReservationEntity, St
 @Service
 class JpaStayBookingApi(
     private val stays: StayReservationJpaRepository,
-    private val inventoryApi: InventoryApi,
+    private val inventorySoldApi: InventorySoldApi,
     private val propertyApi: PropertyApi,
 ) : BookingApi {
     @Transactional(readOnly = true)
@@ -58,7 +58,7 @@ class JpaStayBookingApi(
             return StayBookingResult.Rejected(ReasonCode.BAD_REQUEST)
         }
         when (
-            val confirmed = inventoryApi.confirmHotelNights(
+            val confirmed = inventorySoldApi.confirmHotelNights(
                 ConfirmNightsCommand(
                     propertyId = command.propertyId,
                     roomTypeId = command.roomTypeId,

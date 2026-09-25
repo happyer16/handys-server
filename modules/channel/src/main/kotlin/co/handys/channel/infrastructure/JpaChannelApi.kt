@@ -9,7 +9,7 @@ import co.handys.channel.api.ChannelQuoteRequest
 import co.handys.common.domain.ReasonCode
 import co.handys.inventory.api.DayQuote
 import co.handys.inventory.api.DayQuoteQuery
-import co.handys.inventory.api.InventoryApi
+import co.handys.inventory.api.InventoryQuoteApi
 import co.handys.property.api.PropertyApi
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
@@ -34,7 +34,7 @@ interface ChannelSyncJpaRepository : JpaRepository<ChannelSyncEntity, String>
 
 @Service
 class JpaChannelApi(
-    private val inventoryApi: InventoryApi,
+    private val inventoryQuoteApi: InventoryQuoteApi,
     private val bookingApi: BookingApi,
     private val propertyApi: PropertyApi,
     private val syncRepo: ChannelSyncJpaRepository,
@@ -44,7 +44,7 @@ class JpaChannelApi(
     override fun quote(channelId: String, request: ChannelQuoteRequest, today: LocalDate): DayQuote? {
         val room = propertyApi.getRoomType(request.roomTypeId) ?: return null
         val property = propertyApi.getProperty(request.propertyId) ?: return null
-        return inventoryApi.quoteDay(
+        return inventoryQuoteApi.quoteDay(
             DayQuoteQuery(
                 request.propertyId, request.roomTypeId, request.date, room.mode, room.capacity,
                 room.minLeadDays, room.minCapacityForOverbook, room.overbookRate, today,

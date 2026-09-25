@@ -1,6 +1,7 @@
 package co.handys.booking.payment.infrastructure
 
 import co.handys.booking.payment.application.CancelReservationService
+import co.handys.booking.payment.application.ChargeGateway
 import co.handys.booking.payment.application.ChargePaymentService
 import co.handys.booking.payment.application.CreateDirectReservationService
 import co.handys.booking.payment.application.CreateOtaReservationService
@@ -13,13 +14,14 @@ import co.handys.booking.payment.application.OwnerSettlementBatchService
 import co.handys.booking.payment.application.PaymentGateway
 import co.handys.booking.payment.application.PaymentIntentRepository
 import co.handys.booking.payment.application.PostOtaPayoutService
+import co.handys.booking.payment.application.RefundGateway
 import co.handys.booking.payment.application.RefundRepository
 import co.handys.booking.payment.application.ReservationRepository
 import co.handys.booking.payment.application.RunOwnerSettlementService
 import co.handys.booking.payment.application.SettlementBatchJobLock
 import co.handys.booking.payment.application.SettlementRunRepository
 import co.handys.booking.payment.application.PgEventDedupStore
-import co.handys.inventory.api.InventoryApi
+import co.handys.inventory.api.InventoryHoldApi
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.transaction.PlatformTransactionManager
@@ -43,35 +45,33 @@ class PaymentModuleConfiguration {
 
     @Bean
     fun createDirectReservationService(
-        inventoryApi: InventoryApi,
+        inventoryHoldApi: InventoryHoldApi,
         reservationRepository: ReservationRepository,
         paymentIntentRepository: PaymentIntentRepository,
-        paymentGateway: PaymentGateway,
         clock: Clock,
     ) = CreateDirectReservationService(
-        inventory = inventoryApi,
+        inventory = inventoryHoldApi,
         reservations = reservationRepository,
         paymentIntents = paymentIntentRepository,
-        paymentGateway = paymentGateway,
         clock = clock,
     )
 
     @Bean
     fun chargePaymentService(
         transactionTemplate: TransactionTemplate,
-        paymentGateway: PaymentGateway,
+        chargeGateway: ChargeGateway,
         reservationRepository: ReservationRepository,
         paymentIntentRepository: PaymentIntentRepository,
         idempotencyStore: IdempotencyStore,
-        inventoryApi: InventoryApi,
+        inventoryHoldApi: InventoryHoldApi,
         clock: Clock,
     ) = ChargePaymentService(
         transactions = transactionTemplate,
-        gateway = paymentGateway,
+        gateway = chargeGateway,
         reservations = reservationRepository,
         paymentIntents = paymentIntentRepository,
         idempotency = idempotencyStore,
-        inventory = inventoryApi,
+        inventory = inventoryHoldApi,
         clock = clock,
     )
 
@@ -81,7 +81,7 @@ class PaymentModuleConfiguration {
         reservationRepository: ReservationRepository,
         paymentIntentRepository: PaymentIntentRepository,
         idempotencyStore: IdempotencyStore,
-        inventoryApi: InventoryApi,
+        inventoryHoldApi: InventoryHoldApi,
         mismatchQueue: MismatchQueue,
         pgEventDedupStore: PgEventDedupStore,
         clock: Clock,
@@ -90,7 +90,7 @@ class PaymentModuleConfiguration {
         reservations = reservationRepository,
         paymentIntents = paymentIntentRepository,
         idempotency = idempotencyStore,
-        inventory = inventoryApi,
+        inventory = inventoryHoldApi,
         mismatches = mismatchQueue,
         pgEvents = pgEventDedupStore,
         clock = clock,
@@ -101,34 +101,34 @@ class PaymentModuleConfiguration {
         transactionTemplate: TransactionTemplate,
         reservationRepository: ReservationRepository,
         paymentIntentRepository: PaymentIntentRepository,
-        inventoryApi: InventoryApi,
+        inventoryHoldApi: InventoryHoldApi,
         clock: Clock,
     ) = ExpirePaymentIntentsService(
         transactions = transactionTemplate,
         reservations = reservationRepository,
         paymentIntents = paymentIntentRepository,
-        inventory = inventoryApi,
+        inventory = inventoryHoldApi,
         clock = clock,
     )
 
     @Bean
     fun cancelReservationService(
         transactionTemplate: TransactionTemplate,
-        paymentGateway: PaymentGateway,
+        refundGateway: RefundGateway,
         reservationRepository: ReservationRepository,
         paymentIntentRepository: PaymentIntentRepository,
         refundRepository: RefundRepository,
         idempotencyStore: IdempotencyStore,
-        inventoryApi: InventoryApi,
+        inventoryHoldApi: InventoryHoldApi,
         clock: Clock,
     ) = CancelReservationService(
         transactions = transactionTemplate,
-        gateway = paymentGateway,
+        gateway = refundGateway,
         reservations = reservationRepository,
         paymentIntents = paymentIntentRepository,
         refunds = refundRepository,
         idempotency = idempotencyStore,
-        inventory = inventoryApi,
+        inventory = inventoryHoldApi,
         clock = clock,
     )
 

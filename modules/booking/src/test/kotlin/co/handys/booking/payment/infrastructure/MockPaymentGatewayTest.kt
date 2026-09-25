@@ -2,84 +2,97 @@ package co.handys.booking.payment.infrastructure
 
 import co.handys.booking.payment.application.ChargeRequest
 import co.handys.booking.payment.application.ChargeResult
-import kotlin.test.AfterTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertNotEquals
-import kotlin.test.assertTrue
+import io.kotest.core.spec.style.BehaviorSpec
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
+import io.kotest.matchers.string.shouldStartWith
+import io.kotest.matchers.types.shouldBeInstanceOf
 
-class MockPaymentGatewayTest {
-    private val gateway = MockPaymentGateway(delayMillis = 25)
+class MockPaymentGatewayTest : BehaviorSpec({
+    val gateway = MockPaymentGateway(delayMillis = 25)
 
-    @AfterTest
-    fun tearDown() {
+    afterEach {
         MockPaymentGateway.resetControls()
     }
 
-    @Test
-    fun `default charge succeeds with evt prefix on pgEventId`() {
-        val result = assertIs<ChargeResult.Succeeded>(
-            gateway.charge(
-                ChargeRequest(
-                    idempotencyKey = "pay:r1:CHARGE_FULL",
-                    amountWon = 50_000,
-                    reservationId = "r1",
-                ),
-            ),
-        )
-        assertTrue(result.pgEventId.startsWith("evt_"))
-        assertTrue(result.pgPaymentId.startsWith("pg_"))
+    Given("default mock gateway behaviour") {
+        When("charge is called") {
+            val result =
+                gateway.charge(
+                    ChargeRequest(
+                        idempotencyKey = "pay:r1:CHARGE_FULL",
+                        amountWon = 50_000,
+                        reservationId = "r1",
+                    ),
+                ).shouldBeInstanceOf<ChargeResult.Succeeded>()
+
+            Then("it succeeds with evt-prefixed pgEventId") {
+                result.pgEventId.shouldStartWith("evt_")
+                result.pgPaymentId.shouldStartWith("pg_")
+            }
+        }
     }
 
-    @Test
-    fun `same idempotency key returns stable pg ids`() {
-        val request = ChargeRequest(
-            idempotencyKey = "pay:r1:CHARGE_FULL",
-            amountWon = 50_000,
-            reservationId = "r1",
-        )
-        val first = assertIs<ChargeResult.Succeeded>(gateway.charge(request))
-        val second = assertIs<ChargeResult.Succeeded>(gateway.charge(request))
-        assertEquals(first.pgPaymentId, second.pgPaymentId)
-        assertEquals(first.pgEventId, second.pgEventId)
+    Given("the same idempotency key") {
+        val request =
+            ChargeRequest(
+                idempotencyKey = "pay:r1:CHARGE_FULL",
+                amountWon = 50_000,
+                reservationId = "r1",
+            )
+
+        When("charge is called twice") {
+            val first = gateway.charge(request).shouldBeInstanceOf<ChargeResult.Succeeded>()
+            val second = gateway.charge(request).shouldBeInstanceOf<ChargeResult.Succeeded>()
+
+            Then("pg ids stay stable") {
+                first.pgPaymentId shouldBe second.pgPaymentId
+                first.pgEventId shouldBe second.pgEventId
+            }
+        }
     }
 
-    @Test
-    fun `different idempotency keys get different pg ids`() {
-        val a = assertIs<ChargeResult.Succeeded>(
-            gateway.charge(
-                ChargeRequest("pay:r1:CHARGE_FULL", 1, "r1"),
-            ),
-        )
-        val b = assertIs<ChargeResult.Succeeded>(
-            gateway.charge(
-                ChargeRequest("pay:r2:CHARGE_FULL", 1, "r2"),
-            ),
-        )
-        assertNotEquals(a.pgPaymentId, b.pgPaymentId)
+    Given("different idempotency keys") {
+        When("charge is called for each") {
+            val a =
+                gateway.charge(ChargeRequest("pay:r1:CHARGE_FULL", 1, "r1"))
+                    .shouldBeInstanceOf<ChargeResult.Succeeded>()
+            val b =
+                gateway.charge(ChargeRequest("pay:r2:CHARGE_FULL", 1, "r2"))
+                    .shouldBeInstanceOf<ChargeResult.Succeeded>()
+
+            Then("pg ids differ") {
+                a.pgPaymentId shouldNotBe b.pgPaymentId
+            }
+        }
     }
 
-    @Test
-    fun `nextBehavior DECLINE returns declined`() {
+    Given("nextBehavior DECLINE") {
         MockPaymentGateway.nextBehavior = MockChargeBehavior.DECLINE
-        val result = gateway.charge(
-            ChargeRequest("pay:r1:CHARGE_FULL", 1, "r1"),
-        )
-        assertIs<ChargeResult.Declined>(result)
+
+        When("charge is called") {
+            val result = gateway.charge(ChargeRequest("pay:r1:CHARGE_FULL", 1, "r1"))
+
+            Then("it returns declined") {
+                result.shouldBeInstanceOf<ChargeResult.Declined>()
+            }
+        }
     }
 
-    @Test
-    fun `nextBehavior DELAY still succeeds after waiting`() {
+    Given("nextBehavior DELAY") {
         MockPaymentGateway.nextBehavior = MockChargeBehavior.DELAY
-        val started = System.nanoTime()
-        val result = assertIs<ChargeResult.Succeeded>(
-            gateway.charge(
-                ChargeRequest("pay:r1:CHARGE_FULL", 1, "r1"),
-            ),
-        )
-        val elapsedMs = (System.nanoTime() - started) / 1_000_000
-        assertTrue(elapsedMs >= 20, "expected mock delay, got ${elapsedMs}ms")
-        assertTrue(result.pgEventId.startsWith("evt_"))
+
+        When("charge is called") {
+            val started = System.nanoTime()
+            val result =
+                gateway.charge(ChargeRequest("pay:r1:CHARGE_FULL", 1, "r1"))
+                    .shouldBeInstanceOf<ChargeResult.Succeeded>()
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+            Then("it still succeeds after waiting") {
+                (elapsedMs >= 20) shouldBe true
+                result.pgEventId.shouldStartWith("evt_")
+            }
+        }
     }
-}
+})

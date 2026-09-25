@@ -41,11 +41,6 @@ class ExpirePaymentIntentsServiceTest {
             inventory = inventory,
             reservations = reservations,
             paymentIntents = paymentIntents,
-            paymentGateway = object : PaymentGateway {
-                override fun charge(request: ChargeRequest): ChargeResult = error("no charge")
-
-                override fun refund(request: RefundRequest): RefundResult = error("no refund")
-            },
             clock = clock,
         )
 

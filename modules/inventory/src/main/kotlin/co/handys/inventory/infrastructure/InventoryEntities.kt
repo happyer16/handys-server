@@ -34,3 +34,42 @@ class InventoryHoldEntity(
     @Column(name = "expires_at", nullable = false) var expiresAt: Instant = Instant.EPOCH,
     @Column(name = "status", nullable = false, length = 32) var status: String = "HELD",
 )
+
+/** ADR-004: SPECIFIC_UNIT night occupancy (hold + confirmed). */
+@Entity
+@Table(name = "inventory_unit_night")
+class InventoryUnitNightEntity(
+    @Id @Column(name = "id", length = 160) var id: String = "",
+    @Column(name = "property_id", nullable = false, length = 64) var propertyId: String = "",
+    @Column(name = "unit_id", nullable = false, length = 64) var unitId: String = "",
+    @Column(name = "stay_date", nullable = false) var stayDate: LocalDate = LocalDate.EPOCH,
+    @Column(name = "hold_id", nullable = false, length = 64) var holdId: String = "",
+    @Column(name = "status", nullable = false, length = 32) var status: String = "HELD",
+) {
+    companion object {
+        fun idOf(propertyId: String, unitId: String, stayDate: LocalDate) =
+            "$propertyId:$unitId:$stayDate"
+    }
+}
+
+enum class InventoryRedisMode {
+    NORMAL,
+    DEGRADE,
+    REBUILDING,
+}
+
+/** ADR-004: single-row Redis operational mode (all app instances read this). */
+@Entity
+@Table(name = "inventory_redis_mode")
+class InventoryRedisModeEntity(
+    @Id @Column(name = "id", length = 32) var id: String = SINGLETON_ID,
+    @Enumerated(EnumType.STRING) @Column(name = "mode", nullable = false, length = 32)
+    var mode: InventoryRedisMode = InventoryRedisMode.NORMAL,
+    @Column(name = "leader_instance_id", length = 64) var leaderInstanceId: String? = null,
+    @Column(name = "ping_fail_count", nullable = false) var pingFailCount: Int = 0,
+    @Column(name = "updated_at", nullable = false) var updatedAt: Instant = Instant.EPOCH,
+) {
+    companion object {
+        const val SINGLETON_ID = "singleton"
+    }
+}

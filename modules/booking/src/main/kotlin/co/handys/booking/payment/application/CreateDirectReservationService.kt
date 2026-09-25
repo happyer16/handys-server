@@ -7,7 +7,7 @@ import co.handys.booking.payment.domain.IdempotencyKeys
 import co.handys.booking.payment.domain.PaymentIntent
 import co.handys.common.domain.SellMode
 import co.handys.inventory.api.HoldCommand
-import co.handys.inventory.api.InventoryApi
+import co.handys.inventory.api.InventoryHoldApi
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -15,10 +15,9 @@ import java.time.LocalDate
 import java.util.UUID
 
 class CreateDirectReservationService(
-    private val inventory: InventoryApi,
+    private val inventory: InventoryHoldApi,
     private val reservations: ReservationRepository,
     private val paymentIntents: PaymentIntentRepository,
-    @Suppress("UNUSED_PARAMETER") paymentGateway: PaymentGateway,
     private val clock: Clock,
 ) {
     fun execute(command: CreateDirectReservationCommand): CreateDirectReservationResult {
