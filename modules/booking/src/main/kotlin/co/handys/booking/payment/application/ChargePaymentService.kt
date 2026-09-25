@@ -6,6 +6,7 @@ import co.handys.booking.payment.domain.IdempotencyKeys
 import co.handys.booking.payment.domain.PaymentIntent
 import co.handys.booking.payment.domain.PaymentIntentStatus
 import co.handys.inventory.api.InventoryApi
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.Instant
@@ -28,6 +29,9 @@ class ChargePaymentService(
     private val clock: Clock,
 ) {
     fun charge(reservationId: String): ChargePaymentResult {
+        check(!TransactionSynchronizationManager.isActualTransactionActive()) {
+            "ADR-003: charge must not run inside an outer transaction"
+        }
         val key = IdempotencyKeys.chargeFull(reservationId)
 
         return when (val prepared = requireNotNull(transactions.execute { prepare(reservationId, key) })) {
@@ -46,10 +50,14 @@ class ChargePaymentService(
         val now = clock.instant()
 
         if (intent.status == PaymentIntentStatus.Succeeded) {
+            val pgPaymentId = requireNotNull(intent.pgPaymentId) { "succeeded intent ${intent.id} has no pgPaymentId" }
+            // A paid intent whose reservation was lost is a mismatch, never a success replay.
             return Preparation.ShortCircuit(
-                ChargePaymentResult.AlreadySucceeded(
-                    requireNotNull(intent.pgPaymentId) { "succeeded intent ${intent.id} has no pgPaymentId" },
-                ),
+                if (isReservationLost(reservation)) {
+                    ChargePaymentResult.LateSuccessMismatch(pgPaymentId)
+                } else {
+                    ChargePaymentResult.AlreadySucceeded(pgPaymentId)
+                },
             )
         }
         if (isExpired(reservation, intent, now)) {
@@ -86,6 +94,9 @@ class ChargePaymentService(
     /**
      * TX-Finalize. Intent, reservation, hold and the idempotency record move in one commit so that a paid
      * reservation can never be left with inventory still `held`. No gateway call belongs in here.
+     *
+     * The hold may have expired during the gateway round trip, so the reservation and intent are re-validated
+     * against committed state here rather than trusting the decision made in [prepare].
      */
     private fun finalize(reservationId: String, key: String, gatewayResult: ChargeResult): ChargePaymentResult {
         val reservation = loadReservation(reservationId)
@@ -94,26 +105,49 @@ class ChargePaymentService(
 
         return when (gatewayResult) {
             is ChargeResult.Succeeded -> {
-                paymentIntents.save(intent.markSucceeded(now, pgPaymentId = gatewayResult.pgPaymentId))
-                reservations.save(reservation.copy(status = ReservationStatus.CONFIRMED, updatedAt = now))
-                inventory.confirmHold(reservation.holdId)
-                idempotency.complete(key, ChargeResponsePayload.encode(gatewayResult), terminal = true)
-                ChargePaymentResult.JustSucceeded(gatewayResult.pgPaymentId)
+                if (isExpired(reservation, intent, now)) {
+                    lateSuccess(key, intent, gatewayResult, now)
+                } else {
+                    paymentIntents.save(intent.markSucceeded(now, pgPaymentId = gatewayResult.pgPaymentId))
+                    reservations.save(reservation.copy(status = ReservationStatus.CONFIRMED, updatedAt = now))
+                    inventory.confirmHold(reservation.holdId)
+                    idempotency.complete(key, ChargeResponsePayload.encode(gatewayResult), terminal = true)
+                    ChargePaymentResult.JustSucceeded(gatewayResult.pgPaymentId)
+                }
             }
 
             is ChargeResult.Declined -> {
                 paymentIntents.save(intent.markRequiresAction(now))
-                idempotency.complete(key, ChargeResponsePayload.encode(gatewayResult), terminal = true)
+                // Non-terminal: no money moved, so a retry inside the TTL is allowed to call the PG again.
+                idempotency.complete(key, ChargeResponsePayload.encode(gatewayResult), terminal = false)
                 ChargePaymentResult.Declined(gatewayResult.reason)
             }
         }
     }
 
+    /**
+     * The PG charged but the reservation is no longer chargeable (ADR-003 `LATE_SUCCESS_AFTER_EXPIRE`).
+     * Fail closed: record the captured payment so the money is traceable, but do not confirm the hold and do
+     * not silently move the reservation to CONFIRMED. Terminal, because the charge must not be replayed.
+     */
+    private fun lateSuccess(
+        key: String,
+        intent: PaymentIntent,
+        gatewayResult: ChargeResult.Succeeded,
+        now: Instant,
+    ): ChargePaymentResult {
+        paymentIntents.save(intent.markSucceeded(now, pgPaymentId = gatewayResult.pgPaymentId))
+        idempotency.complete(key, ChargeResponsePayload.encodeLateSuccess(gatewayResult), terminal = true)
+        return ChargePaymentResult.LateSuccessMismatch(gatewayResult.pgPaymentId)
+    }
+
     private fun isExpired(reservation: Reservation, intent: PaymentIntent, now: Instant): Boolean =
-        reservation.status == ReservationStatus.EXPIRED ||
-            reservation.status == ReservationStatus.CANCELLED ||
+        isReservationLost(reservation) ||
             intent.status == PaymentIntentStatus.Cancelled ||
             !now.isBefore(intent.expiresAt)
+
+    private fun isReservationLost(reservation: Reservation): Boolean =
+        reservation.status == ReservationStatus.EXPIRED || reservation.status == ReservationStatus.CANCELLED
 
     private fun loadReservation(reservationId: String): Reservation =
         reservations.findById(reservationId)
@@ -143,7 +177,17 @@ sealed class ChargePaymentResult {
 
     data class Expired(val code: String = INTENT_EXPIRED) : ChargePaymentResult()
 
+    /**
+     * The PG charged but the reservation had already expired, so nothing was confirmed. The payment is
+     * captured and needs the mismatch path (refund or manual confirm) — not a success for the caller.
+     */
+    data class LateSuccessMismatch(
+        val pgPaymentId: String,
+        val code: String = LATE_SUCCESS_AFTER_EXPIRE,
+    ) : ChargePaymentResult()
+
     companion object {
         const val INTENT_EXPIRED = "INTENT_EXPIRED"
+        const val LATE_SUCCESS_AFTER_EXPIRE = "LATE_SUCCESS_AFTER_EXPIRE"
     }
 }

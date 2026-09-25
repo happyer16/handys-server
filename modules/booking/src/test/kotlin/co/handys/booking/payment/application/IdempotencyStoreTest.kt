@@ -18,6 +18,7 @@ class IdempotencyStoreTest {
         assertEquals("pay:r1:CHARGE_FULL", existing.entry.key)
         assertNull(existing.entry.payload)
         assertEquals(false, existing.entry.terminal)
+        assertTrue(existing.entry.inFlight)
     }
 
     @Test
@@ -29,5 +30,18 @@ class IdempotencyStoreTest {
         val again = assertIs<BeginResult.Existing>(store.begin("pay:r1:CHARGE_FULL"))
         assertTrue(again.entry.terminal)
         assertEquals("""{"pgPaymentId":"pg_1"}""", again.entry.payload)
+    }
+
+    @Test
+    fun `begin after non-terminal complete re-acquires the key`() {
+        val store = InMemoryIdempotencyStore()
+        assertIs<BeginResult.Acquired>(store.begin("pay:r1:CHARGE_FULL"))
+        store.complete("pay:r1:CHARGE_FULL", responsePayload = """{"reason":"declined"}""", terminal = false)
+
+        assertIs<BeginResult.Acquired>(store.begin("pay:r1:CHARGE_FULL"))
+        // Re-acquired means in flight again, so a concurrent caller is held off.
+        val concurrent = assertIs<BeginResult.Existing>(store.begin("pay:r1:CHARGE_FULL"))
+        assertTrue(concurrent.entry.inFlight)
+        assertNull(concurrent.entry.payload)
     }
 }

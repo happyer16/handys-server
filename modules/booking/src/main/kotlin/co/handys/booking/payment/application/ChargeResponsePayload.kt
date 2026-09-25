@@ -8,6 +8,7 @@ package co.handys.booking.payment.application
 internal object ChargeResponsePayload {
     private const val SUCCEEDED = "SUCCEEDED"
     private const val DECLINED = "DECLINED"
+    private const val LATE_SUCCESS = ChargePaymentResult.LATE_SUCCESS_AFTER_EXPIRE
 
     fun encode(result: ChargeResult): String =
         when (result) {
@@ -18,10 +19,15 @@ internal object ChargeResponsePayload {
                 """{"status":"$DECLINED","reason":"${result.reason}"}"""
         }
 
+    /** Charge captured after the reservation expired: replayed as a mismatch, never as a success. */
+    fun encodeLateSuccess(result: ChargeResult.Succeeded): String =
+        """{"status":"$LATE_SUCCESS","pgPaymentId":"${result.pgPaymentId}","pgEventId":"${result.pgEventId}"}"""
+
     fun decode(payload: String): ChargePaymentResult =
         when (val status = field(payload, "status")) {
             SUCCEEDED -> ChargePaymentResult.AlreadySucceeded(field(payload, "pgPaymentId"))
             DECLINED -> ChargePaymentResult.Declined(field(payload, "reason"))
+            LATE_SUCCESS -> ChargePaymentResult.LateSuccessMismatch(field(payload, "pgPaymentId"))
             else -> throw IllegalStateException("unknown charge payload status: $status")
         }
 

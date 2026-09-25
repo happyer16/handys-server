@@ -19,6 +19,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
@@ -160,18 +161,42 @@ class ChargePaymentServiceTest {
 
         val intent = assertNotNull(paymentIntents.findByIdempotencyKey(IdempotencyKeys.chargeFull(reservationId)))
         assertEquals(PaymentIntentStatus.RequiresAction, intent.status)
+
+        // A decline moved no money, so the key must be re-acquirable rather than frozen as terminal.
+        assertIs<BeginResult.Acquired>(idempotency.begin(IdempotencyKeys.chargeFull(reservationId)))
     }
 
     @Test
-    fun `retry after decline replays the declined response without a second gateway call`() {
+    fun `retry after decline reaches the gateway again and can succeed`() {
+        val reservationId = prepareReservation()
+        val holdId = assertNotNull(reservations.findById(reservationId)).holdId
+        gatewayBehaviour = { ChargeResult.Declined("insufficient_funds") }
+        assertIs<ChargePaymentResult.Declined>(service.charge(reservationId))
+
+        gatewayBehaviour = { succeeded() }
+        val retry = assertIs<ChargePaymentResult.JustSucceeded>(service.charge(reservationId))
+
+        assertEquals(2, gateway.chargeCount)
+        assertEquals("pg_test_1", retry.pgPaymentId)
+        assertTrue(inventory.isConfirmed(holdId))
+        assertEquals(ReservationStatus.CONFIRMED, assertNotNull(reservations.findById(reservationId)).status)
+    }
+
+    @Test
+    fun `a declined retry still holds off a concurrent caller`() {
         val reservationId = prepareReservation()
         gatewayBehaviour = { ChargeResult.Declined("insufficient_funds") }
         assertIs<ChargePaymentResult.Declined>(service.charge(reservationId))
 
-        val retry = assertIs<ChargePaymentResult.Declined>(service.charge(reservationId))
+        var reentrant: ChargePaymentResult? = null
+        gatewayBehaviour = {
+            reentrant = service.charge(reservationId)
+            succeeded()
+        }
+        assertIs<ChargePaymentResult.JustSucceeded>(service.charge(reservationId))
 
-        assertEquals("insufficient_funds", retry.reason)
-        assertEquals(1, gateway.chargeCount)
+        assertIs<ChargePaymentResult.InProgress>(reentrant)
+        assertEquals(2, gateway.chargeCount)
     }
 
     @Test
@@ -193,6 +218,76 @@ class ChargePaymentServiceTest {
 
         assertIs<ChargePaymentResult.Expired>(service.charge(reservationId))
 
+        assertEquals(0, gateway.chargeCount)
+    }
+
+    @Test
+    fun `ttl elapsing during the gateway call does not silently confirm`() {
+        val reservationId = prepareReservation()
+        val holdId = assertNotNull(reservations.findById(reservationId)).holdId
+        gatewayBehaviour = {
+            now = now.plusSeconds(16 * 60)
+            succeeded()
+        }
+
+        val result = assertIs<ChargePaymentResult.LateSuccessMismatch>(service.charge(reservationId))
+
+        assertEquals(ChargePaymentResult.LATE_SUCCESS_AFTER_EXPIRE, result.code)
+        assertEquals("pg_test_1", result.pgPaymentId)
+        assertFalse(inventory.isConfirmed(holdId))
+        assertEquals(ReservationStatus.PENDING_PAYMENT, assertNotNull(reservations.findById(reservationId)).status)
+
+        // The money moved, so the intent keeps the gateway id and the record is terminal: never charge again.
+        val intent = assertNotNull(paymentIntents.findByIdempotencyKey(IdempotencyKeys.chargeFull(reservationId)))
+        assertEquals(PaymentIntentStatus.Succeeded, intent.status)
+        assertEquals("pg_test_1", intent.pgPaymentId)
+        val record = assertIs<BeginResult.Existing>(idempotency.begin(IdempotencyKeys.chargeFull(reservationId)))
+        assertTrue(record.entry.terminal)
+    }
+
+    @Test
+    fun `a reservation expired during the gateway call does not confirm the hold`() {
+        val reservationId = prepareReservation()
+        val holdId = assertNotNull(reservations.findById(reservationId)).holdId
+        gatewayBehaviour = {
+            val reservation = assertNotNull(reservations.findById(reservationId))
+            reservations.save(reservation.copy(status = ReservationStatus.EXPIRED))
+            inventory.releaseHold(holdId)
+            succeeded()
+        }
+
+        assertIs<ChargePaymentResult.LateSuccessMismatch>(service.charge(reservationId))
+
+        assertFalse(inventory.isConfirmed(holdId))
+        assertEquals(ReservationStatus.EXPIRED, assertNotNull(reservations.findById(reservationId)).status)
+    }
+
+    @Test
+    fun `a mismatched charge replays as a mismatch not as a success`() {
+        val reservationId = prepareReservation()
+        gatewayBehaviour = {
+            val reservation = assertNotNull(reservations.findById(reservationId))
+            reservations.save(reservation.copy(status = ReservationStatus.EXPIRED))
+            succeeded()
+        }
+        assertIs<ChargePaymentResult.LateSuccessMismatch>(service.charge(reservationId))
+
+        val replay = assertIs<ChargePaymentResult.LateSuccessMismatch>(service.charge(reservationId))
+
+        assertEquals("pg_test_1", replay.pgPaymentId)
+        assertEquals(1, gateway.chargeCount)
+    }
+
+    @Test
+    fun `charge refuses to run inside an outer transaction`() {
+        val reservationId = prepareReservation()
+
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                transactions.execute { service.charge(reservationId) }
+            }
+
+        assertTrue(assertNotNull(failure.message).contains("must not run inside an outer transaction"))
         assertEquals(0, gateway.chargeCount)
     }
 

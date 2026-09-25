@@ -16,10 +16,26 @@ class PaymentIntentTest {
             expiresAt = Instant.parse("2026-09-25T12:15:00Z"),
             now = Instant.parse("2026-09-25T12:00:00Z"),
         ).markProcessing(Instant.parse("2026-09-25T12:01:00Z"))
-            .markSucceeded(Instant.parse("2026-09-25T12:02:00Z"))
+            .markSucceeded(Instant.parse("2026-09-25T12:02:00Z"), pgPaymentId = "pg_1")
 
         assertFailsWith<IllegalStateException> {
-            intent.markSucceeded(Instant.parse("2026-09-25T12:03:00Z"))
+            intent.markSucceeded(Instant.parse("2026-09-25T12:03:00Z"), pgPaymentId = "pg_1")
+        }
+    }
+
+    @Test
+    fun `a blank pgPaymentId cannot succeed an intent`() {
+        val processing = PaymentIntent.create(
+            id = "pi_2",
+            reservationId = "r2",
+            amountWon = 100_000L,
+            idempotencyKey = IdempotencyKeys.chargeFull("r2"),
+            expiresAt = Instant.parse("2026-09-25T12:15:00Z"),
+            now = Instant.parse("2026-09-25T12:00:00Z"),
+        ).markProcessing(Instant.parse("2026-09-25T12:01:00Z"))
+
+        assertFailsWith<IllegalArgumentException> {
+            processing.markSucceeded(Instant.parse("2026-09-25T12:02:00Z"), pgPaymentId = " ")
         }
     }
 

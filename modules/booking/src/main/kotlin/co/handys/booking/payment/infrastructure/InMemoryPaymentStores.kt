@@ -11,19 +11,29 @@ class InMemoryIdempotencyStore : IdempotencyStore {
     private val entries = ConcurrentHashMap<String, IdempotencyEntry>()
 
     override fun begin(key: String): BeginResult {
-        val inFlight = IdempotencyEntry(key = key, payload = null, terminal = false)
-        val existing = entries.putIfAbsent(key, inFlight)
-        return if (existing == null) {
-            BeginResult.Acquired
-        } else {
-            BeginResult.Existing(existing)
+        var result: BeginResult = BeginResult.Acquired
+        entries.compute(key) { _, current ->
+            when {
+                current == null -> inFlight(key)
+                // Terminal or still in flight: the caller must not reach the gateway.
+                current.terminal || current.inFlight -> {
+                    result = BeginResult.Existing(current)
+                    current
+                }
+                // Completed non-terminal (declined): hand the key back so a retry can call the PG again.
+                else -> inFlight(key)
+            }
         }
+        return result
     }
 
     override fun complete(key: String, responsePayload: String, terminal: Boolean) {
         val current = entries[key] ?: throw IllegalArgumentException("unknown idempotency key: $key")
-        entries[key] = current.copy(payload = responsePayload, terminal = terminal)
+        entries[key] = current.copy(payload = responsePayload, terminal = terminal, inFlight = false)
     }
+
+    private fun inFlight(key: String) =
+        IdempotencyEntry(key = key, payload = null, terminal = false, inFlight = true)
 }
 
 class InMemoryPaymentIntentRepository : PaymentIntentRepository {

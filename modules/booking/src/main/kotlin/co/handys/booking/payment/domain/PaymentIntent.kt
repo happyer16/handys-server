@@ -18,8 +18,10 @@ data class PaymentIntent(
         return copy(status = PaymentIntentStatus.Processing, updatedAt = at)
     }
 
-    fun markSucceeded(at: Instant, pgPaymentId: String? = null): PaymentIntent {
+    /** [pgPaymentId] is mandatory: a Succeeded intent with no gateway id cannot be reconciled or refunded. */
+    fun markSucceeded(at: Instant, pgPaymentId: String): PaymentIntent {
         requireTransition(from = PaymentIntentStatus.Processing, to = PaymentIntentStatus.Succeeded, at = at)
+        require(pgPaymentId.isNotBlank()) { "PaymentIntent $id cannot succeed without a pgPaymentId" }
         return copy(status = PaymentIntentStatus.Succeeded, updatedAt = at, pgPaymentId = pgPaymentId)
     }
 
